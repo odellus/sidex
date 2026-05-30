@@ -53,6 +53,11 @@ fn is_git_bash_path(path: &std::path::Path) -> bool {
     normalized.ends_with("\\git\\bin\\bash.exe") || normalized.ends_with("\\git\\usr\\bin\\bash.exe")
 }
 
+#[cfg(not(target_os = "windows"))]
+fn resolve_git_bash() -> Option<String> {
+    None
+}
+
 #[cfg(target_os = "windows")]
 fn resolve_git_bash() -> Option<String> {
     let mut candidates = Vec::new();
