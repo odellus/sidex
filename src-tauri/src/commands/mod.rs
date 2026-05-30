@@ -34,6 +34,7 @@ pub mod text;
 pub mod textmate;
 pub mod theme;
 pub mod updater;
+pub mod acp_chat;
 pub mod validation; // NEW: Centralized security validation
 pub mod watch;
 pub mod window;
@@ -73,6 +74,7 @@ pub use text::*;
 pub use textmate::*;
 pub use theme::*;
 pub use updater::*;
+pub use acp_chat::*;
 // pub use validation::*; // Internal use only - not a public command
 pub use watch::*;
 pub use window::*;

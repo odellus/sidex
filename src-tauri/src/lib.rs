@@ -17,6 +17,7 @@ use commands::terminal::TerminalStore;
 use commands::updater::UpdateManagerState;
 use commands::watch::WatchStore;
 use commands::window::restore_and_show;
+use commands::acp_chat::AcpChatState;
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
@@ -390,6 +391,7 @@ pub fn run() {
         .manage(Arc::new(SettingsStore::new()))
         .manage(Arc::new(sidex_extension_api::CommandRegistry::new()))
         .manage(Arc::new(RemoteManagerStore::new()))
+        .manage(Arc::new(AcpChatState::new()))
         .manage(Arc::new(
             WasmExtensionRuntime::new().expect("failed to initialize WASM runtime"),
         ))
@@ -474,6 +476,9 @@ pub fn run() {
 
             let process_store = app.state::<Arc<ProcessStore>>();
             process_store.set_app_handle(app.handle().clone());
+
+            let acp_chat_state = app.state::<Arc<AcpChatState>>();
+            acp_chat_state.set_app_handle(app.handle().clone());
 
             if let Err(err) = commands::updater::initialize(app.handle()) {
                 log::warn!("update manager disabled: {err}");
@@ -851,6 +856,14 @@ pub fn run() {
             // Extension API introspection
             commands::ext_api_get_namespaces,
             commands::ext_api_get_commands,
+            // ACP Chat
+            commands::acp_chat_spawn,
+            commands::acp_chat_new_session,
+            commands::acp_chat_prompt,
+            commands::acp_chat_cancel,
+            commands::acp_chat_close_session,
+            commands::acp_chat_list_sessions,
+            commands::acp_chat_get_queue,
             // Menu i18n
             commands::update_menu_labels,
         ])

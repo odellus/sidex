@@ -112,6 +112,7 @@ sidex-update = { path = "../crates/sidex-update" }
 sidex-profiles = { path = "../crates/sidex-profiles" }
 sidex-auth = { path = "../crates/sidex-auth" }
 sidex-textmate = { path = "../crates/sidex-textmate" }
+sidex-acp = { path = "../crates/sidex-acp" }
 
 tree-sitter = "0.24"
 tree-sitter-rust = "0.23"

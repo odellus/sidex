@@ -20,6 +20,7 @@ members = [
   "crates/sidex-profiles",
   "crates/sidex-auth",
   "crates/sidex-textmate",
+  "crates/sidex-acp",
   "src-tauri",
   "sidex-extension-sdk",
 ]
@@ -54,6 +55,7 @@ sidex-update = { path = "crates/sidex-update" }
 sidex-profiles = { path = "crates/sidex-profiles" }
 sidex-auth = { path = "crates/sidex-auth" }
 sidex-textmate = { path = "crates/sidex-textmate" }
+sidex-acp = { path = "crates/sidex-acp" }
 
 # Core
 tokio = { version = "1", features = ["full"] }

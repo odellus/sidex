@@ -1,0 +1,28 @@
+[package]
+name = "sidex-acp"
+description = "Agent Client Protocol integration for SideX"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# Internal — reuse Sidex infrastructure
+sidex-terminal = { workspace = true }
+sidex-workspace = { workspace = true }
+
+# Core
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+crossbeam = { workspace = true }
+parking_lot = { workspace = true }
+
+# Process management
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+[lints]
+workspace = true

@@ -6074,6 +6074,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sidex-acp",
  "sidex-auth",
  "sidex-dap",
  "sidex-db",
@@ -6110,6 +6111,23 @@ dependencies = [
  "wasmtime-wasi",
  "which 6.0.3",
  "zip",
+]
+
+[[package]]
+name = "sidex-acp"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "crossbeam",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "sidex-terminal",
+ "sidex-workspace",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
