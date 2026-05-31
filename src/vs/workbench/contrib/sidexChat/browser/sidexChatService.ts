@@ -6,6 +6,7 @@
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { AcpStore, ChatMessage, ToolCallInfo, PromptTurnState, ConnectionStatus } from './acpStore.js';
 
 // ─── Public types (used by UI components) ─────────────────────────────────
@@ -91,7 +92,9 @@ class SidexChatServiceImpl implements ISidexChatService {
 	get isThinking(): boolean { return this._store.isThinking; }
 	get serverModel(): string { return this._model; }
 
-	constructor() {
+	constructor(
+		@IWorkspaceContextService private readonly _workspaceContext: IWorkspaceContextService,
+	) {
 		// Forward store events
 		this._store.onDidChange(() => {
 			this._onDidChangeMessages.fire(this._store.messages);
@@ -108,7 +111,8 @@ class SidexChatServiceImpl implements ISidexChatService {
 	}
 
 	async connect(): Promise<void> {
-		const workspaceRoot = _getWorkspaceRoot();
+		const workspace = this._workspaceContext.getWorkspace();
+		const workspaceRoot = workspace.folders[0]?.uri?.fsPath;
 		const cwd = workspaceRoot || '/home';
 
 		let lastError: unknown;
@@ -171,15 +175,6 @@ class SidexChatServiceImpl implements ISidexChatService {
 	getSavedSessions(): Array<{ id: string; title: string; date: number }> {
 		// Sessions are managed by the agent — query async
 		return [];
-	}
-}
-
-function _getWorkspaceRoot(): string | undefined {
-	try {
-		const vscode = (globalThis as any).vscode;
-		return vscode?.workspace?.workspaceFolders?.[0]?.uri?.fsPath;
-	} catch {
-		return undefined;
 	}
 }
 

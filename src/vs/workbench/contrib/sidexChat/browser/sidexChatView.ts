@@ -160,6 +160,8 @@ export class SidexChatViewPane extends ViewPane {
 	}
 
 	private _currentAssistantComp: AssistantMessage | null = null;
+	private _renderedMessageCount = 0;
+	private _messageComponents: Map<number, UserMessage | AssistantMessage> = new Map();
 
 	private _renderMessages(messages: readonly IChatMessage[]): void {
 		if (!this._messagesEl) { return; }
@@ -167,24 +169,30 @@ export class SidexChatViewPane extends ViewPane {
 		const hasMessages = messages.length > 0;
 		this._welcomeEl.style.display = hasMessages ? 'none' : 'flex';
 
-		DOM.clearNode(this._messagesEl);
-		this._currentAssistantComp = null;
-		if (!hasMessages) {
+		// Messages were cleared — reset everything
+		if (messages.length < this._renderedMessageCount) {
+			DOM.clearNode(this._messagesEl);
+			this._messageComponents.clear();
+			this._renderedMessageCount = 0;
+			this._currentAssistantComp = null;
 			this._messagesEl.appendChild(this._welcomeEl);
-			return;
 		}
-		this._messagesEl.appendChild(this._welcomeEl);
 
-		for (const msg of messages) {
-			if (msg.role === 'user') {
-				const comp = new UserMessage(msg);
-				comp.appendTo(this._messagesEl);
-				this._viewDisposables.add(comp);
-			} else if (msg.role === 'assistant') {
+		if (!hasMessages) { return; }
+
+		// Only the last message changed (streaming content update) — re-render just that one
+		const isContentUpdate = messages.length === this._renderedMessageCount && messages.length > 0;
+		if (isContentUpdate) {
+			const lastIdx = messages.length - 1;
+			const lastMsg = messages[lastIdx];
+			if (lastMsg.role === 'assistant') {
+				const oldComp = this._messageComponents.get(lastIdx);
+				if (oldComp) {
+					oldComp.element.remove();
+				}
 				const duration = this._turnStartTime > 0 ? Date.now() - this._turnStartTime : 0;
-				const isThinking = this.chatService.isThinking &&
-					msg === messages[messages.length - 1];
-				const comp = new AssistantMessage(msg, duration, (filePath) => {
+				const isThinking = this.chatService.isThinking;
+				const comp = new AssistantMessage(lastMsg, duration, (filePath) => {
 					this._openFile(filePath);
 				}, isThinking);
 				comp.appendTo(this._messagesEl);
@@ -192,11 +200,38 @@ export class SidexChatViewPane extends ViewPane {
 				this._viewDisposables.add(comp.onCopy(text => {
 					navigator.clipboard.writeText(text).catch(() => { /* ignore */ });
 				}));
-				if (msg === messages[messages.length - 1]) {
-					this._currentAssistantComp = comp;
+				this._messageComponents.set(lastIdx, comp);
+				this._currentAssistantComp = comp;
+			}
+		} else {
+			// Only append new messages
+			for (let i = this._renderedMessageCount; i < messages.length; i++) {
+				const msg = messages[i];
+				if (msg.role === 'user') {
+					const comp = new UserMessage(msg);
+					comp.appendTo(this._messagesEl);
+					this._viewDisposables.add(comp);
+					this._messageComponents.set(i, comp);
+				} else if (msg.role === 'assistant') {
+					const duration = this._turnStartTime > 0 ? Date.now() - this._turnStartTime : 0;
+					const isThinking = this.chatService.isThinking && msg === messages[messages.length - 1];
+					const comp = new AssistantMessage(msg, duration, (filePath) => {
+						this._openFile(filePath);
+					}, isThinking);
+					comp.appendTo(this._messagesEl);
+					this._viewDisposables.add(comp);
+					this._viewDisposables.add(comp.onCopy(text => {
+						navigator.clipboard.writeText(text).catch(() => { /* ignore */ });
+					}));
+					this._messageComponents.set(i, comp);
+					if (msg === messages[messages.length - 1]) {
+						this._currentAssistantComp = comp;
+					}
 				}
 			}
 		}
+
+		this._renderedMessageCount = messages.length;
 
 		if (this.chatService.isStreaming) {
 			const cursor = document.createElement('span');
