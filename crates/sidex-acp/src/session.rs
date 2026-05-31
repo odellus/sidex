@@ -545,21 +545,20 @@ impl AcpSession {
         self.broadcast_prompt_state(PromptTurnState::Cancelled);
 
         // Kill all active terminals for this session
-        let terminals_to_kill: Vec<sidex_terminal::TermHandle> = {
+        let terminals_to_kill: Vec<SessionTerminal> = {
             let mut active = self.active_terminals.lock().await;
-            let handles: Vec<sidex_terminal::TermHandle> = active.values().map(|t| t.handle).collect();
-            active.clear();
-            handles
+            let terms: Vec<SessionTerminal> = active.drain().map(|(_, v)| v).collect();
+            terms
         };
-        for handle in terminals_to_kill {
+        for term in terminals_to_kill {
             acp_log!(
                 "INFO",
                 "Killing terminal {:?} for cancelled session {}",
-                handle,
+                term.handle,
                 self.session_id()
             );
             let _ = tokio::task::spawn_blocking(move || {
-                // Best-effort kill via sidex-terminal
+                let _ = term.pty.kill_tree();
             }).await;
         }
 
@@ -966,8 +965,8 @@ async fn handle_agent_request(
         }
         "terminal/kill" | "terminal/killTerminal" => {
             let id = params.get("terminalId").and_then(|v| v.as_str()).ok_or("missing terminalId")?;
-            let mut terminals = active_terminals.lock().await;
-            if let Some(term) = terminals.remove(id) {
+            let terminals = active_terminals.lock().await;
+            if let Some(term) = terminals.get(id) {
                 let _ = term.pty.kill_tree();
             }
             let resp = KillTerminalResponse::new();
