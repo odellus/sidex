@@ -108,27 +108,33 @@ class SidexChatServiceImpl implements ISidexChatService {
 	}
 
 	async connect(): Promise<void> {
-		try {
-			await this._store.start();
+		const workspaceRoot = _getWorkspaceRoot();
+		const cwd = workspaceRoot || '/home';
 
-			// Detect agent from environment or use a default
-			const workspaceRoot = _getWorkspaceRoot();
-			const cwd = workspaceRoot || '/home';
-
-		await this._store.spawnAndConnect({
-			name: 'crow',
-			command: 'crow-cli',
-			args: ['acp'],
-			env: [],
-			cwd,
-		});
-
-			// Agent provides models via session/new response — use defaults until we wire that up
-			this._model = '';
-			this._onDidChangeModels.fire([]);
-		} catch (e) {
-			console.error('[sidexChatService] connect failed:', e);
+		let lastError: unknown;
+		for (let attempt = 0; attempt < 3; attempt++) {
+			try {
+				await this._store.start();
+				await this._store.spawnAndConnect({
+					name: 'crow',
+					command: 'crow-cli',
+					args: ['acp'],
+					env: [],
+					cwd,
+				});
+				// Agent provides models via session/new response — use defaults until we wire that up
+				this._model = '';
+				this._onDidChangeModels.fire([]);
+				return;
+			} catch (e) {
+				lastError = e;
+				if (attempt < 2) {
+					console.warn(`[sidexChatService] connect attempt ${attempt + 1} failed, retrying in 2s...`);
+					await new Promise(r => setTimeout(r, 2000));
+				}
+			}
 		}
+		console.error('[sidexChatService] connect failed after 3 attempts:', lastError);
 	}
 
 	sendMessage(text: string): void {

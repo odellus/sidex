@@ -7,22 +7,24 @@
 import type { ContentBlock } from '@agentclientprotocol/sdk';
 import { invoke } from '../../../../sidex-bridge.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
+import { listen } from '@tauri-apps/api/event';
 
-// ─── Tauri event listener (from sidexLspService pattern) ──────────────────
+// ─── Tauri event listener ─────────────────────────────────────────────────
 
-interface TauriEventWindow {
-	__TAURI__?: {
-		event?: {
-			listen<T>(event: string, handler: (event: { payload: T }) => void): Promise<() => void>;
-		};
-	};
-}
-
-function tauriListen<T>(event: string, handler: (payload: T) => void): Promise<() => void> {
-	const w = globalThis as unknown as TauriEventWindow;
-	const listen = w.__TAURI__?.event?.listen;
-	if (!listen) { return Promise.resolve(() => {}); }
-	return listen<T>(event, e => handler(e.payload));
+async function tauriListen<T>(event: string, handler: (payload: T) => void): Promise<() => void> {
+	for (let attempt = 0; attempt < 30; attempt++) {
+		try {
+			return await listen<T>(event, (e) => handler(e.payload));
+		} catch (e: any) {
+			const msg = e?.message || String(e);
+			if (msg.includes('proxy disconnected') && attempt < 29) {
+				await new Promise(r => setTimeout(r, 1000));
+				continue;
+			}
+			return () => {};
+		}
+	}
+	return () => {};
 }
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -111,6 +113,7 @@ export class AcpStore {
 	readonly onDidChangeConnectionState: Event<void> = this._onDidChangeConnectionState.event;
 
 	private _unlisteners: (() => void)[] = [];
+	private _eventListenerStarted = false;
 
 	private _registerEmitter<T>(): Emitter<T> {
 		const e = new Emitter<T>();
@@ -134,6 +137,8 @@ export class AcpStore {
 
 	/** Start listening to Tauri ACP events. Call once after construction. */
 	async start(): Promise<void> {
+		if (this._eventListenerStarted) { return; }
+		this._eventListenerStarted = true;
 		const unlisten = await tauriListen<{
 			type: string;
 			sessionId: string;
@@ -229,6 +234,12 @@ export class AcpStore {
 		} catch (e) {
 			console.error('[acpStore] prompt failed:', e);
 			this._setStreaming(false);
+			return;
+		}
+		// Safety: if prompt_complete event was missed, clean up
+		if (this._isStreaming) {
+			this._setStreaming(false);
+			this._finalizeAssistantMessage();
 		}
 	}
 
@@ -318,31 +329,32 @@ export class AcpStore {
 			return;
 		}
 
-		// Assistant content streaming
-		if (sessionUpdate === 'assistant_message_chunk') {
+		// Assistant content streaming (ACP sends "agent_message_chunk")
+		if (sessionUpdate === 'agent_message_chunk') {
 			const text = content?.text as string || '';
+			this._ensureLastAssistantMessage();
+			this._messages[this._messages.length - 1].content += text;
 			this._onDidReceiveChunk.fire({ type: 'text', content: text });
+			this._onDidChange.fire();
 			return;
 		}
 
-		// Thinking
-		if (sessionUpdate === 'thinking') {
+		// Thinking / reasoning (ACP sends "agent_thought_chunk")
+		if (sessionUpdate === 'agent_thought_chunk') {
 			const text = content?.text as string || '';
 			this._pendingThinking += text;
+			this._ensureLastAssistantMessage();
+			this._messages[this._messages.length - 1].thinkingContent = this._pendingThinking;
 			this._onDidReceiveChunk.fire({ type: 'thinking', content: text });
+			this._onDidChange.fire();
 			return;
 		}
 
-		if (sessionUpdate === 'thinking_done') {
-			this._onDidReceiveChunk.fire({ type: 'thinking_done' });
-			return;
-		}
-
-		// Tool calls
+		// Tool calls (ACP sends "tool_call" with camelCase fields)
 		if (sessionUpdate === 'tool_call') {
 			const toolCallId = update.toolCallId as string || '';
-			const name = update.name as string || '';
-			const input = update.input as unknown;
+			const name = update.title as string || '';
+			const input = update.rawInput as unknown;
 			this._pendingToolCalls.set(toolCallId, {
 				id: toolCallId,
 				name,
@@ -359,10 +371,12 @@ export class AcpStore {
 			return;
 		}
 
+		// Tool call updates (ACP sends "tool_call_update"; ToolCallUpdate struct is NOT camelCase,
+		// so tool_call_id is snake_case, but flattened ToolCallUpdateFields IS camelCase)
 		if (sessionUpdate === 'tool_call_update') {
-			const toolCallId = update.toolCallId as string || '';
+			const toolCallId = (update.tool_call_id ?? update.toolCallId) as string || '';
 			const status = update.status as string;
-			const output = update.output as unknown;
+			const output = update.rawOutput as unknown;
 			const existing = this._pendingToolCalls.get(toolCallId);
 			if (existing) {
 				if (status) { existing.status = status; }
@@ -410,25 +424,37 @@ export class AcpStore {
 		}
 	}
 
+	private _ensureLastAssistantMessage(): void {
+		if (this._messages.length === 0 || this._messages[this._messages.length - 1].role !== 'assistant') {
+			this._messages = [...this._messages, { role: 'assistant', content: '' }];
+		}
+	}
+
 	private _finalizeAssistantMessage(): void {
-		// Build the assistant message from accumulated chunks
 		const toolCalls: ToolCallInfo[] = [];
 		for (const tc of this._pendingToolCalls.values()) {
 			toolCalls.push({ ...tc });
 		}
 
 		const thinkingContent = this._pendingThinking || undefined;
+		const lastMsg = this._messages[this._messages.length - 1];
 
-		// The actual content comes from the chat view's chunk accumulation
-		// Here we just need to add the structured parts
-		const msg: ChatMessage = {
-			role: 'assistant',
-			content: '', // filled by chunk accumulation in the view
-			thinkingContent,
-			toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-		};
+		if (lastMsg && lastMsg.role === 'assistant') {
+			// Update the existing streaming placeholder
+			lastMsg.thinkingContent = thinkingContent;
+			if (toolCalls.length > 0) {
+				lastMsg.toolCalls = toolCalls;
+			}
+		} else {
+			const msg: ChatMessage = {
+				role: 'assistant',
+				content: '',
+				thinkingContent,
+				toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+			};
+			this._messages = [...this._messages, msg];
+		}
 
-		this._messages = [...this._messages, msg];
 		this._pendingToolCalls.clear();
 		this._pendingThinking = '';
 		this._onDidChange.fire();

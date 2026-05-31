@@ -1,7 +1,7 @@
 //! Tauri commands for ACP chat integration.
 //!
 //! These commands bridge the frontend to the `sidex-acp` crate,
-//! which owns all session state, agent processes, and queue management.
+//! which owns all session state and agent processes.
 
 use std::sync::{Arc, Mutex};
 
@@ -269,17 +269,4 @@ pub async fn acp_chat_list_sessions(
     })
 }
 
-/// Get the current queue for a session.
-#[tauri::command]
-pub async fn acp_chat_get_queue(
-    state: State<'_, Arc<AcpChatState>>,
-    request: SessionIdRequest,
-) -> Result<Vec<sidex_acp::QueuedItem>, String> {
-    let session = state
-        .session_manager
-        .get_session(&request.session_id)
-        .await
-        .ok_or("Session not found")?;
 
-    Ok(session.get_queue().await)
-}

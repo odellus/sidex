@@ -6168,7 +6168,9 @@ version = "0.2.0"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
+ "chrono",
  "crossbeam",
+ "dirs 5.0.1",
  "parking_lot",
  "serde",
  "serde_json",

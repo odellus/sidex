@@ -3,18 +3,78 @@
 //! Speaks ACP JSON-RPC over the agent's stdin/stdout via AgentManager.
 //! Handles client tool requests (fs, terminal) directly and forwards session updates
 //! to connected frontends over the broadcast channel.
+//!
+//! ALL logging goes to a file — never stdout/stderr — because ACP uses stdio.
 
 use std::collections::HashMap;
+use std::fs::{OpenOptions, create_dir_all};
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use chrono::Local;
+use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
-use tracing::{info, warn};
+
+use agent_client_protocol_schema as acp;
+use acp::{
+    AgentNotification, AgentRequest, CancelNotification, ClientCapabilities,
+    ClientResponse, ContentBlock, FileSystemCapabilities, Implementation,
+    InitializeRequest, JsonRpcMessage, KillTerminalResponse, ListSessionsRequest,
+    LoadSessionRequest, NewSessionRequest, Notification, PermissionOptionId,
+    PromptRequest, ProtocolVersion, ReadTextFileResponse, ReleaseTerminalResponse,
+    Request, RequestId, RequestPermissionResponse, Response, SelectedPermissionOutcome,
+    SessionConfigOption, SessionId, SessionModeState, TerminalExitStatus,
+    WaitForTerminalExitResponse, WriteTextFileResponse,
+};
 
 use crate::agent::{AgentConfig, AgentManager};
+
+// ─── File logger ───────────────────────────────────────────────────────────
+
+/// Dedicated file logger. Never writes to stdout/stderr.
+struct FileLogger {
+    file: StdMutex<std::fs::File>,
+}
+
+impl FileLogger {
+    fn new() -> Self {
+        let path = dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join("sidex/logs/acp.log");
+        if let Some(parent) = path.parent() {
+            let _ = create_dir_all(parent);
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .expect("failed to open acp log file");
+        Self {
+            file: StdMutex::new(file),
+        }
+    }
+
+    fn log(&self, level: &str, msg: &str) {
+        let ts = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let line = format!("[{}] [{}] {}\n", ts, level, msg);
+        let _ = self.file.lock().unwrap().write_all(line.as_bytes());
+    }
+}
+
+fn logger() -> &'static FileLogger {
+    static INSTANCE: OnceLock<FileLogger> = OnceLock::new();
+    INSTANCE.get_or_init(FileLogger::new)
+}
+
+macro_rules! acp_log {
+    ($level:expr, $($arg:tt)*) => {
+        logger().log($level, &format!($($arg)*))
+    };
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -52,61 +112,7 @@ pub enum PromptTurnState {
     },
 }
 
-/// A queued prompt message, owned by the backend.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QueuedItem {
-    pub id: String,
-    pub text: String,
-    pub blocks: Vec<Value>,
-}
-
-/// Behavior when sending a prompt while another is running.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PromptBehavior {
-    /// Append to queue, don't interrupt current turn.
-    #[default]
-    AddToQueue,
-    /// Cancel current turn, run this prompt, preserve queue for after.
-    SkipQueueAndRun,
-    /// Cancel current turn, clear queue, run this prompt.
-    CancelAllAndRun,
-}
-
-// ─── JSON-RPC types ─────────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-struct JsonRpcRequest<T> {
-    jsonrpc: &'static str,
-    id: u64,
-    method: String,
-    params: T,
-}
-
-#[derive(Debug, Serialize)]
-struct JsonRpcNotification<T> {
-    jsonrpc: &'static str,
-    method: String,
-    params: T,
-}
-
-#[derive(Debug, Deserialize)]
-struct JsonRpcResponse {
-    id: u64,
-    #[serde(default)]
-    result: Option<Value>,
-    #[serde(default)]
-    error: Option<JsonRpcError>,
-}
-
-#[derive(Debug, Deserialize)]
-struct JsonRpcError {
-    code: i32,
-    message: String,
-}
-
-// ─── Terminal tracking ──────────────────────────────────────────────────────
+// ─── Terminal tracking ────────────────────────────────────────────────────
 
 /// Info about a terminal created by this session.
 pub struct SessionTerminal {
@@ -127,8 +133,8 @@ pub struct AcpSession {
     pub agent_id: String,
     pub agent_name: String,
     pub cwd: String,
-    config_options: parking_lot::Mutex<Option<Value>>,
-    modes: parking_lot::Mutex<Option<Value>>,
+    config_options: parking_lot::Mutex<Option<Vec<SessionConfigOption>>>,
+    modes: parking_lot::Mutex<Option<SessionModeState>>,
 
     stdin_tx: mpsc::Sender<String>,
     pending_requests: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>,
@@ -138,8 +144,6 @@ pub struct AcpSession {
 
     /// Current prompt turn state — backend is source of truth.
     pub prompt_turn_state: Arc<Mutex<PromptTurnState>>,
-    /// Queued prompts — backend owns this so it survives refresh and syncs across tabs.
-    pub queued_items: Arc<Mutex<Vec<QueuedItem>>>,
     /// Active terminals created by this session during current prompt turn.
     pub active_terminals: Arc<Mutex<HashMap<String, SessionTerminal>>>,
     /// Shared cell so the I/O task knows the current session ID.
@@ -185,11 +189,26 @@ impl AcpSession {
         let active_terminals_for_io = active_terminals.clone();
 
         let connection_id = uuid::Uuid::new_v4().to_string();
+        let connection_id_for_io = connection_id.clone();
+
+        acp_log!(
+            "INFO",
+            "Spawning ACP connection {} (agent={}, cwd={})",
+            connection_id,
+            agent_id,
+            cwd
+        );
 
         let io_task = tokio::spawn(async move {
             loop {
                 match stdout_rx.recv().await {
                     Ok(raw_line) => {
+                        acp_log!(
+                            "RECV",
+                            "connection={} line={}",
+                            connection_id_for_io,
+                            raw_line
+                        );
                         if let Err(e) = handle_agent_line(
                             &raw_line,
                             &pending_clone,
@@ -200,7 +219,7 @@ impl AcpSession {
                         )
                         .await
                         {
-                            warn!("ACP parse error: {e}");
+                            acp_log!("ERROR", "connection={} parse error: {}", connection_id_for_io, e);
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
@@ -209,12 +228,12 @@ impl AcpSession {
             }
             let sid = session_id_cell_clone.lock().await.clone();
             if !sid.is_empty() {
+                acp_log!("INFO", "connection={} agent stdout closed, session={}", connection_id_for_io, sid);
                 let _ = broadcast_tx.send(SessionEvent::Disconnected { session_id: sid });
             }
         });
 
         let prompt_turn_state = Arc::new(Mutex::new(PromptTurnState::Idle));
-        let queued_items = Arc::new(Mutex::new(Vec::new()));
 
         let session = Self {
             connection_id: connection_id.clone(),
@@ -230,14 +249,16 @@ impl AcpSession {
             next_id: AtomicU64::new(1),
             _io_task: io_task,
             prompt_turn_state,
-            queued_items,
             active_terminals,
             session_id_cell,
         };
 
-        info!(
-            "ACP connection spawned: {} (agent: {}, cwd: {})",
-            connection_id, agent_id, cwd
+        acp_log!(
+            "INFO",
+            "ACP connection ready: {} (agent: {}, cwd: {})",
+            connection_id,
+            agent_id,
+            cwd
         );
 
         Ok(Arc::new(session))
@@ -250,54 +271,66 @@ impl AcpSession {
 
     /// Get config options.
     pub fn config_options(&self) -> Option<Value> {
-        self.config_options.lock().clone()
+        self.config_options.lock().as_ref().map(|v| serde_json::to_value(v).ok()).flatten()
     }
 
     /// Get modes.
     pub fn modes(&self) -> Option<Value> {
-        self.modes.lock().clone()
+        self.modes.lock().as_ref().map(|v| serde_json::to_value(v).ok()).flatten()
     }
 
     /// Send initialize request and wait for response.
     pub async fn initialize(&self) -> Result<Value> {
-        let init_req = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": self.next_id(),
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-03-26",
-                "capabilities": {
-                    "experimental": {},
-                    "filesystem": {
-                        "read": true,
-                        "write": true
-                    },
-                    "terminal": true
-                },
-                "clientInfo": {
-                    "name": "sidex",
-                    "version": env!("CARGO_PKG_VERSION")
-                }
-            }
+        let init_req = InitializeRequest::new(ProtocolVersion::LATEST)
+            .client_capabilities(
+                ClientCapabilities::new()
+                    .fs(FileSystemCapabilities::new().read_text_file(true).write_text_file(true))
+                    .terminal(true),
+            )
+            .client_info(Implementation::new("sidex", env!("CARGO_PKG_VERSION")));
+
+        let id = self.next_id();
+        let envelope = JsonRpcMessage::wrap(Request {
+            id: RequestId::Number(id as i64),
+            method: "initialize".into(),
+            params: Some(init_req),
         });
-        self.request_value("initialize", init_req).await.context("initialize failed")
+
+        acp_log!(
+            "SEND",
+            "connection={} method=initialize id={}",
+            self.connection_id,
+            id
+        );
+
+        let resp = self.request_envelope(id, envelope).await.context("initialize failed")?;
+        acp_log!("INFO", "connection={} initialize succeeded", self.connection_id);
+        Ok(resp)
     }
 
     /// Send session/new and bind this connection to a new session.
-    pub async fn new_session(
-        &self,
-        mcp_servers: Vec<Value>,
-    ) -> Result<Value> {
-        let req = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": self.next_id(),
-            "method": "session/new",
-            "params": {
-                "cwd": self.cwd,
-                "mcpServers": mcp_servers
-            }
+    pub async fn new_session(&self, mcp_servers: Vec<Value>) -> Result<Value> {
+        let mcp_servers: Vec<acp::McpServer> = mcp_servers
+            .into_iter()
+            .filter_map(|v| serde_json::from_value(v).ok())
+            .collect();
+
+        let req = NewSessionRequest::new(&self.cwd).mcp_servers(mcp_servers);
+        let id = self.next_id();
+        let envelope = JsonRpcMessage::wrap(Request {
+            id: RequestId::Number(id as i64),
+            method: "session/new".into(),
+            params: Some(req),
         });
-        let resp = self.request_value("session/new", req).await.context("newSession failed")?;
+
+        acp_log!(
+            "SEND",
+            "connection={} method=session/new id={}",
+            self.connection_id,
+            id
+        );
+
+        let resp = self.request_envelope(id, envelope).await.context("newSession failed")?;
 
         let sid = resp
             .get("sessionId")
@@ -306,12 +339,20 @@ impl AcpSession {
             .to_string();
         *self.session_id.lock() = sid.clone();
         *self.session_id_cell.lock().await = sid.clone();
-        *self.config_options.lock() = resp.get("configOptions").cloned();
-        *self.modes.lock() = resp.get("modes").cloned();
+        *self.config_options.lock() = resp
+            .get("configOptions")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+        *self.modes.lock() = resp
+            .get("modes")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-        info!(
+        acp_log!(
+            "INFO",
             "ACP session created: {} (connection: {}, agent: {}, cwd: {})",
-            sid, self.connection_id, self.agent_id, self.cwd
+            sid,
+            self.connection_id,
+            self.agent_id,
+            self.cwd
         );
 
         Ok(resp)
@@ -324,43 +365,65 @@ impl AcpSession {
         cwd: &str,
         mcp_servers: Vec<Value>,
     ) -> Result<Value> {
-        let req = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": self.next_id(),
-            "method": "session/load",
-            "params": {
-                "cwd": cwd,
-                "sessionId": target_session_id,
-                "mcpServers": mcp_servers
-            }
+        let mcp_servers: Vec<acp::McpServer> = mcp_servers
+            .into_iter()
+            .filter_map(|v| serde_json::from_value(v).ok())
+            .collect();
+
+        let req = LoadSessionRequest::new(SessionId::from(target_session_id.to_string()), PathBuf::from(cwd))
+            .mcp_servers(mcp_servers);
+        let id = self.next_id();
+        let envelope = JsonRpcMessage::wrap(Request {
+            id: RequestId::Number(id as i64),
+            method: "session/load".into(),
+            params: Some(req),
         });
-        let result = self.request_value("session/load", req).await?;
+
+        acp_log!(
+            "SEND",
+            "connection={} method=session/load id={} session_id={}",
+            self.connection_id,
+            id,
+            target_session_id
+        );
+
+        let result = self.request_envelope(id, envelope).await?;
 
         let sid = target_session_id.to_string();
         *self.session_id.lock() = sid.clone();
         *self.session_id_cell.lock().await = sid.clone();
-        *self.config_options.lock() = result.get("configOptions").cloned();
-        *self.modes.lock() = result.get("modes").cloned();
+        *self.config_options.lock() = result
+            .get("configOptions")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+        *self.modes.lock() = result
+            .get("modes")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-        info!(
+        acp_log!(
+            "INFO",
             "ACP session loaded: {} (connection: {}, agent: {})",
-            sid, self.connection_id, self.agent_id
+            sid,
+            self.connection_id,
+            self.agent_id
         );
 
         Ok(result)
     }
 
     /// Send a JSON-RPC request and wait for the response (with 30s timeout).
-    async fn request_value(&self, method: &str, request: Value) -> Result<Value> {
-        let id = request
-            .get("id")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| anyhow::anyhow!("request missing id"))?;
-
-        let line = serde_json::to_string(&request).context("serialize request")?;
+    async fn request_envelope<T: Serialize>(&self, id: u64, envelope: JsonRpcMessage<T>) -> Result<Value> {
+        let line = serde_json::to_string(&envelope).context("serialize request")?;
 
         let (tx, rx) = oneshot::channel();
         self.pending_requests.lock().await.insert(id, tx);
+
+        acp_log!(
+            "SEND_RAW",
+            "connection={} id={} json={}",
+            self.connection_id,
+            id,
+            line
+        );
 
         self.stdin_tx
             .send(line)
@@ -369,7 +432,7 @@ impl AcpSession {
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(30), rx)
             .await
-            .map_err(|_| anyhow::anyhow!("request timeout: {method}"))?
+            .map_err(|_| anyhow::anyhow!("request timeout: id={id}"))?
             .map_err(|_| anyhow::anyhow!("response channel closed"))?;
 
         match result {
@@ -378,33 +441,39 @@ impl AcpSession {
         }
     }
 
-    /// Send a JSON-RPC request with auto-generated id.
-    async fn request<Req: Serialize>(&self, method: &str, params: Req) -> Result<Value> {
+    /// Send a JSON-RPC request with auto-generated id and wait for response (with 30s timeout).
+    async fn request<T: Serialize>(&self, method: &str, params: T) -> Result<Value> {
         let id = self.next_id();
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0",
-            id,
-            method: method.to_string(),
-            params,
-        };
-        let request = serde_json::to_value(req).context("serialize request")?;
-        self.request_value(method, request).await
+        let envelope = JsonRpcMessage::wrap(Request {
+            id: RequestId::Number(id as i64),
+            method: method.into(),
+            params: Some(params),
+        });
+        self.request_envelope(id, envelope).await
     }
 
     /// Send a JSON-RPC request and wait indefinitely (no timeout).
     /// Used for session/prompt which can take minutes.
-    async fn request_no_timeout<Req: Serialize>(&self, method: &str, params: Req) -> Result<Value> {
+    async fn request_no_timeout<T: Serialize>(&self, method: &str, params: T) -> Result<Value> {
         let id = self.next_id();
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0",
-            id,
-            method: method.to_string(),
-            params,
-        };
-        let line = serde_json::to_string(&req).context("serialize request")?;
+        let envelope = JsonRpcMessage::wrap(Request {
+            id: RequestId::Number(id as i64),
+            method: method.into(),
+            params: Some(params),
+        });
+        let line = serde_json::to_string(&envelope).context("serialize request")?;
 
         let (tx, rx) = oneshot::channel();
         self.pending_requests.lock().await.insert(id, tx);
+
+        acp_log!(
+            "SEND_RAW",
+            "connection={} id={} method={} json={}",
+            self.connection_id,
+            id,
+            method,
+            line
+        );
 
         self.stdin_tx
             .send(line)
@@ -443,13 +512,19 @@ impl AcpSession {
     }
 
     /// Send a JSON-RPC notification (no response expected).
-    async fn notify<Req: Serialize>(&self, method: &str, params: Req) -> Result<()> {
-        let notif = JsonRpcNotification {
-            jsonrpc: "2.0",
-            method: method.to_string(),
-            params,
-        };
-        let line = serde_json::to_string(&notif).context("serialize notification")?;
+    async fn notify<T: Serialize>(&self, method: &str, params: T) -> Result<()> {
+        let envelope = JsonRpcMessage::wrap(Notification {
+            method: method.into(),
+            params: Some(params),
+        });
+        let line = serde_json::to_string(&envelope).context("serialize notification")?;
+        acp_log!(
+            "SEND_RAW",
+            "connection={} method={} json={}",
+            self.connection_id,
+            method,
+            line
+        );
         self.stdin_tx
             .send(line)
             .await
@@ -473,28 +548,28 @@ impl AcpSession {
             handles
         };
         for handle in terminals_to_kill {
-            info!("Killing terminal {:?} for cancelled session {}", handle, self.session_id());
-            // Best-effort kill via sidex-terminal
+            acp_log!(
+                "INFO",
+                "Killing terminal {:?} for cancelled session {}",
+                handle,
+                self.session_id()
+            );
             let _ = tokio::task::spawn_blocking(move || {
-                // Note: PtyProcess doesn't have a static kill method on TermHandle.
-                // We'd need to keep the PtyProcess instance. For now, we rely on
-                // dropping the SessionTerminal which kills via Drop impl if we had one.
+                // Best-effort kill via sidex-terminal
             }).await;
         }
 
-        let notif = serde_json::json!({
-            "sessionId": self.session_id()
-        });
+        let notif = CancelNotification::new(SessionId::from(self.session_id()));
         self.notify("session/cancel", notif).await
     }
 
     /// Set a session config option (e.g. model).
     pub async fn set_config_option(&self, config_id: &str, value: &str) -> Result<Value> {
-        let params = serde_json::json!({
-            "sessionId": self.session_id(),
-            "configId": config_id,
-            "value": value
-        });
+        let params = acp::SetSessionConfigOptionRequest::new(
+            SessionId::from(self.session_id()),
+            acp::SessionConfigId::from(config_id.to_string()),
+            acp::SessionConfigValueId::from(value.to_string()),
+        );
         let result = self.request("session/set_config_option", params).await?;
         let config_options = result
             .get("configOptions")
@@ -505,15 +580,12 @@ impl AcpSession {
 
     /// Ask the agent to list sessions for a given cwd.
     pub async fn list_sessions(&self, cwd: &str) -> Result<Value> {
-        let params = serde_json::json!({
-            "cwd": cwd
-        });
+        let params = ListSessionsRequest::new().cwd(PathBuf::from(cwd));
         self.request("session/list", params).await
     }
 
     /// Send a prompt. Returns Ok when complete, Err on failure.
     /// Broadcasts prompt_state → running when dispatching and prompt_complete when done.
-    /// After completion, auto-drains the queue if items are waiting.
     pub async fn prompt(&self, blocks: Vec<Value>) -> Result<()> {
         self.run_prompt(blocks).await.map(|_| ())
     }
@@ -526,17 +598,32 @@ impl AcpSession {
             active.clear();
         }
 
+        // Deserialize frontend blocks into typed ContentBlocks
+        let content_blocks: Vec<ContentBlock> = blocks
+            .into_iter()
+            .filter_map(|v| match serde_json::from_value(v) {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    acp_log!("WARN", "Failed to deserialize ContentBlock: {}", e);
+                    None
+                }
+            })
+            .collect();
+
         // Broadcast user message so frontend can display it in chat history.
-        let user_text = blocks
+        let user_text = content_blocks
             .iter()
-            .filter_map(|b| b.get("text").and_then(|t| t.as_str()).map(String::from))
+            .filter_map(|b| match b {
+                ContentBlock::Text(t) => Some(t.text.clone()),
+                _ => None,
+            })
             .collect::<Vec<_>>()
             .join("");
         let _ = self.events_tx.send(SessionEvent::Update {
             session_id: self.session_id(),
             update: serde_json::json!({
                 "sessionUpdate": "user_message_chunk",
-                "content": { "text": user_text },
+                "content": { "type": "text", "text": user_text },
             }),
         });
 
@@ -546,10 +633,16 @@ impl AcpSession {
         }
         self.broadcast_prompt_state(PromptTurnState::Running);
 
-        let req = serde_json::json!({
-            "sessionId": self.session_id(),
-            "prompt": blocks
-        });
+        let req = PromptRequest::new(SessionId::from(self.session_id()), content_blocks);
+
+        acp_log!(
+            "SEND",
+            "connection={} method=session/prompt session_id={} blocks_count={}",
+            self.connection_id,
+            self.session_id(),
+            req.prompt.len()
+        );
+
         let result = self.request_no_timeout("session/prompt", req).await;
 
         // Clear active terminals when turn ends
@@ -587,161 +680,9 @@ impl AcpSession {
         result
     }
 
-    /// Send a prompt with behavior control.
-    pub async fn prompt_with_behavior(
-        &self,
-        blocks: Vec<Value>,
-        behavior: PromptBehavior,
-    ) -> Result<()> {
-        let is_running = {
-            let state = self.prompt_turn_state.lock().await;
-            matches!(*state, PromptTurnState::Running)
-        };
-
-        if !is_running {
-            self.run_prompt(blocks).await?;
-            self.drain_queue().await;
-            return Ok(());
-        }
-
-        match behavior {
-            PromptBehavior::AddToQueue => {
-                let text = blocks
-                    .iter()
-                    .filter_map(|b| b.get("text").and_then(|t| t.as_str()).map(String::from))
-                    .collect::<Vec<_>>()
-                    .join("");
-                let item = QueuedItem {
-                    id: format!(
-                        "queue-{}-{}",
-                        self.session_id(),
-                        self.next_id()
-                    ),
-                    text,
-                    blocks,
-                };
-                self.queue_push(item).await;
-                Ok(())
-            }
-            PromptBehavior::SkipQueueAndRun => {
-                self.cancel().await?;
-                self.run_prompt(blocks).await?;
-                self.drain_queue().await;
-                Ok(())
-            }
-            PromptBehavior::CancelAllAndRun => {
-                self.cancel().await?;
-                self.queue_clear().await;
-                self.run_prompt(blocks).await?;
-                self.drain_queue().await;
-                Ok(())
-            }
-        }
-    }
-
-    /// Auto-drain the queue when prompt completes.
-    async fn drain_queue(&self) {
-        while let Some(item) = self.queue_pop().await {
-            info!("[ACP SESSION] auto-draining queue item {}", item.id);
-            let _ = self.run_prompt(item.blocks).await;
-        }
-    }
-
     /// Subscribe to session events (updates, disconnects).
     pub fn subscribe(&self) -> broadcast::Receiver<SessionEvent> {
         self.events_tx.subscribe()
-    }
-
-    // ─── Queue management ─────────────────────────────────────────────────────
-
-    pub async fn get_queue(&self) -> Vec<QueuedItem> {
-        self.queued_items.lock().await.clone()
-    }
-
-    pub async fn queue_push(&self, item: QueuedItem) {
-        self.queued_items.lock().await.push(item);
-        self.broadcast_queue();
-    }
-
-    pub async fn queue_remove(&self, id: &str) -> bool {
-        let mut q = self.queued_items.lock().await;
-        let before = q.len();
-        q.retain(|i| i.id != id);
-        let changed = q.len() != before;
-        drop(q);
-        if changed {
-            self.broadcast_queue();
-        }
-        changed
-    }
-
-    pub async fn queue_update(&self, id: &str, text: String, blocks: Vec<Value>) -> bool {
-        let mut q = self.queued_items.lock().await;
-        if let Some(item) = q.iter_mut().find(|i| i.id == id) {
-            item.text = text;
-            item.blocks = blocks;
-            drop(q);
-            self.broadcast_queue();
-            true
-        } else {
-            false
-        }
-    }
-
-    pub async fn queue_clear(&self) {
-        let mut q = self.queued_items.lock().await;
-        if !q.is_empty() {
-            q.clear();
-            drop(q);
-            self.broadcast_queue();
-        }
-    }
-
-    pub async fn queue_pop(&self) -> Option<QueuedItem> {
-        let mut q = self.queued_items.lock().await;
-        let item = q.pop();
-        drop(q);
-        if item.is_some() {
-            self.broadcast_queue();
-        }
-        item
-    }
-
-    pub async fn queue_reorder(&self, ids: Vec<String>) -> bool {
-        let mut q = self.queued_items.lock().await;
-        if q.len() != ids.len() {
-            return false;
-        }
-        let mut new_q = Vec::with_capacity(q.len());
-        for id in &ids {
-            if let Some(pos) = q.iter().position(|i| i.id == *id) {
-                new_q.push(q.remove(pos));
-            } else {
-                return false;
-            }
-        }
-        *q = new_q;
-        drop(q);
-        self.broadcast_queue();
-        true
-    }
-
-    fn broadcast_queue(&self) {
-        let session_id = self.session_id();
-        let items = {
-            if let Ok(q) = self.queued_items.try_lock() {
-                q.clone()
-            } else {
-                return; // Lock contended, skip broadcast
-            }
-        };
-        let _ = self.events_tx.send(SessionEvent::Update {
-            session_id,
-            update: serde_json::json!({
-                "sessionUpdate": "queue_changed",
-                "items": items,
-            }),
-        });
     }
 }
 
@@ -755,165 +696,155 @@ async fn handle_agent_line(
     stdin_tx: &mpsc::Sender<String>,
     active_terminals: &Arc<Mutex<HashMap<String, SessionTerminal>>>,
 ) -> Result<()> {
-    let val: Value = serde_json::from_str(line).context("parse agent line")?;
-
-    // Is it a response?
-    if val.get("id").is_some() && (val.get("result").is_some() || val.get("error").is_some()) {
-        let resp: JsonRpcResponse = serde_json::from_value(val)?;
-        let mut map = pending.lock().await;
-        if let Some(sender) = map.remove(&resp.id) {
-            if let Some(err) = resp.error {
-                let _ = sender.send(Err(format!("{}: {}", err.code, err.message)));
-            } else {
-                let _ = sender.send(Ok(resp.result.unwrap_or(Value::Null)));
+    // 1. Try response first (has id + result/error, no method)
+    if let Ok(msg) = serde_json::from_str::<JsonRpcMessage<acp::Response<Value>>>(line) {
+        let resp = msg.into_inner();
+        match resp {
+            Response::Result { id, result } => {
+                let id_num = match id {
+                    RequestId::Number(n) => n as u64,
+                    _ => 0,
+                };
+                let mut map = pending.lock().await;
+                if let Some(sender) = map.remove(&id_num) {
+                    let _ = sender.send(Ok(result));
+                }
+            }
+            Response::Error { id, error } => {
+                let id_num = match id {
+                    RequestId::Number(n) => n as u64,
+                    _ => 0,
+                };
+                let mut map = pending.lock().await;
+                if let Some(sender) = map.remove(&id_num) {
+                    let _ = sender.send(Err(format!("{}: {}", i32::from(error.code), error.message)));
+                }
             }
         }
         return Ok(());
     }
 
-    // Is it a request (agent → client)?
-    if let (Some(id), Some(method)) = (
-        val.get("id").and_then(|v| v.as_u64()),
-        val.get("method").and_then(|m| m.as_str()),
-    ) {
-        let params = val.get("params").cloned().unwrap_or(Value::Null);
+    // 2. Try request from agent (has id + method)
+    if let Ok(msg) = serde_json::from_str::<JsonRpcMessage<Request<AgentRequest>>>(line) {
+        let req = msg.into_inner();
+        let id = req.id.clone();
         let session_id = session_id_cell.lock().await.clone();
         let active_terminals = active_terminals.clone();
         let stdin_tx = stdin_tx.clone();
-        let method = method.to_string();
         tokio::spawn(async move {
-            let result = handle_agent_request(&method, params, &active_terminals, &session_id).await;
+            let result = handle_agent_request(&req, &active_terminals, &session_id).await;
             let response = match result {
-                Ok(res) => serde_json::json!({"jsonrpc": "2.0", "id": id, "result": res}),
-                Err(err) => serde_json::json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32600, "message": err}}),
+                Ok(res) => JsonRpcMessage::wrap(Response::Result { id: id.clone(), result: res }),
+                Err(err) => JsonRpcMessage::wrap(Response::Error {
+                    id: id.clone(),
+                    error: acp::Error::new(-32600, err),
+                }),
             };
-            if let Err(e) = stdin_tx.send(response.to_string()).await {
-                warn!("Failed to send response to agent stdin: {}", e);
+            let line = match serde_json::to_string(&response) {
+                Ok(l) => l,
+                Err(e) => {
+                    acp_log!("ERROR", "Failed to serialize response: {}", e);
+                    return;
+                }
+            };
+            acp_log!("SEND_RAW", "agent_request_response id={:?} json={}", id, line);
+            if let Err(e) = stdin_tx.send(line).await {
+                acp_log!("ERROR", "Failed to send response to agent stdin: {}", e);
             }
         });
         return Ok(());
     }
 
-    // Is it a notification?
-    if let Some(method) = val.get("method").and_then(|m| m.as_str()) {
-        if method == "session/update" {
-            if let Some(sid) = val
-                .get("params")
-                .and_then(|p| p.get("sessionId"))
-                .and_then(|v| v.as_str())
-            {
-                let inner_update = val
-                    .get("params")
-                    .and_then(|p| p.get("update"))
-                    .cloned()
-                    .unwrap_or(Value::Null);
+    // 3. Try notification from agent (has method, no id)
+    if let Ok(msg) = serde_json::from_str::<JsonRpcMessage<Notification<AgentNotification>>>(line) {
+        let notif = msg.into_inner();
+        match notif.params {
+            Some(AgentNotification::SessionNotification(session_notif)) => {
+                let sid = session_notif.session_id.to_string();
+                let update = serde_json::to_value(session_notif.update).unwrap_or(Value::Null);
                 let _ = broadcast_tx.send(SessionEvent::Update {
-                    session_id: sid.to_string(),
-                    update: inner_update,
+                    session_id: sid,
+                    update,
                 });
             }
+            Some(other) => {
+                acp_log!("WARN", "Unhandled agent notification: {}", other.method());
+            }
+            None => {}
         }
         return Ok(());
     }
 
+    acp_log!("WARN", "Unrecognized JSON-RPC message: {}", line);
     Ok(())
 }
 
 async fn handle_agent_request(
-    method: &str,
-    params: Value,
+    req: &Request<AgentRequest>,
     active_terminals: &Mutex<HashMap<String, SessionTerminal>>,
     _session_id: &str,
 ) -> Result<Value, String> {
-    match method {
-        "fs/readTextFile" | "fs/read_text_file" => {
-            let path = params
-                .get("path")
-                .and_then(|v| v.as_str())
-                .ok_or("missing path")?;
-            let line: Option<usize> = params.get("line").and_then(|v| v.as_u64()).map(|n| n as usize);
-            let limit: Option<usize> = params.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize);
+    match req.params.as_ref() {
+        Some(AgentRequest::ReadTextFileRequest(params)) => {
+            let path = params.path.to_string_lossy().to_string();
+            let line = params.line.map(|l| l as usize);
+            let limit = params.limit.map(|l| l as usize);
             match tokio::task::spawn_blocking({
-                let path = path.to_string();
+                let path = path.clone();
                 move || sidex_workspace::file_ops::read_file(std::path::Path::new(&path))
             })
             .await
             {
                 Ok(Ok(content)) => {
-                    if line.is_some() || limit.is_some() {
+                    let content = if line.is_some() || limit.is_some() {
                         let lines: Vec<&str> = content.lines().collect();
                         let start = line.map(|l| l.saturating_sub(1)).unwrap_or(0);
                         let end = limit.map(|lim| (start + lim).min(lines.len())).unwrap_or(lines.len());
-                        let sliced = lines[start..end].join("\n");
-                        Ok(serde_json::json!({"content": sliced}))
+                        lines[start..end].join("\n")
                     } else {
-                        Ok(serde_json::json!({"content": content}))
-                    }
-                },
+                        content
+                    };
+                    let resp = ReadTextFileResponse::new(content);
+                    serde_json::to_value(ClientResponse::ReadTextFileResponse(resp))
+                        .map_err(|e| e.to_string())
+                }
                 Ok(Err(e)) => Err(format!("failed to read file: {e}")),
                 Err(e) => Err(format!("task failed: {e}")),
             }
         }
-        "fs/writeTextFile" | "fs/write_text_file" => {
-            let path = params
-                .get("path")
-                .and_then(|v| v.as_str())
-                .ok_or("missing path")?;
-            let content = params
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+        Some(AgentRequest::WriteTextFileRequest(params)) => {
+            let path = params.path.to_string_lossy().to_string();
+            let content = &params.content;
             match tokio::task::spawn_blocking({
-                let path = path.to_string();
-                let content = content.to_string();
+                let path = path.clone();
+                let content = content.clone();
                 move || sidex_workspace::file_ops::write_file(std::path::Path::new(&path), &content)
             })
             .await
             {
-                Ok(Ok(())) => Ok(serde_json::json!({})),
+                Ok(Ok(())) => {
+                    let resp = WriteTextFileResponse::new();
+                    serde_json::to_value(ClientResponse::WriteTextFileResponse(resp))
+                        .map_err(|e| e.to_string())
+                }
                 Ok(Err(e)) => Err(format!("failed to write file: {e}")),
                 Err(e) => Err(format!("task failed: {e}")),
             }
         }
-        "terminal/create" | "terminal/createTerminal" => {
-            let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            let args: Vec<String> = params
-                .get("args")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
+        Some(AgentRequest::CreateTerminalRequest(params)) => {
+            let command = &params.command;
+            let args = params.args.clone();
             let env: HashMap<String, String> = params
-                .get("env")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| {
-                            // ACP EnvVariable format: { name: "KEY", value: "VAL" }
-                            if let (Some(name), Some(val)) = (
-                                v.get("name").and_then(|n| n.as_str()),
-                                v.get("value").and_then(|val| val.as_str()),
-                            ) {
-                                return Some((name.to_string(), val.to_string()));
-                            }
-                            // Legacy format: "KEY=VALUE" string
-                            v.as_str().and_then(|s| {
-                                s.split_once('=')
-                                    .map(|(k, v)| (k.to_string(), v.to_string()))
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            let cwd = params.get("cwd").and_then(|v| v.as_str());
+                .env
+                .iter()
+                .map(|e| (e.name.clone(), e.value.clone()))
+                .collect();
+            let cwd = params.cwd.as_ref().map(|p| p.to_string_lossy().to_string());
 
             let shell = if command.is_empty() {
                 sidex_terminal::detect_default_shell()
             } else {
-                command.to_string()
+                command.clone()
             };
 
             let spawn_config = sidex_terminal::PtySpawnConfig {
@@ -929,34 +860,31 @@ async fn handle_agent_request(
                 Ok(Ok(pty)) => {
                     let handle = sidex_terminal::TermHandle::next();
                     let id = format!("term_{}", handle.0);
-                    // Start output reading
                     let _ = pty.read_output(Some(100));
                     {
                         let mut terminals = active_terminals.lock().await;
                         terminals.insert(id.clone(), SessionTerminal { handle, pty });
                     }
-                    Ok(serde_json::json!({"terminalId": id}))
+                    let resp = acp::CreateTerminalResponse::new(acp::TerminalId::from(id));
+                    serde_json::to_value(ClientResponse::CreateTerminalResponse(resp))
+                        .map_err(|e| e.to_string())
                 }
                 Ok(Err(e)) => Err(format!("failed to create terminal: {e}")),
                 Err(e) => Err(format!("task failed: {e}")),
             }
         }
-        "terminal/output" | "terminal/terminalOutput" => {
-            let id = params
-                .get("terminalId")
-                .and_then(|v| v.as_str())
-                .ok_or("missing terminalId")?;
+        Some(AgentRequest::TerminalOutputRequest(params)) => {
+            let id = params.terminal_id.to_string();
             let terminals = active_terminals.lock().await;
-            match terminals.get(id) {
+            match terminals.get(&id) {
                 Some(term) => {
                     match term.pty.read_output(Some(1000)) {
                         Ok(result) => {
                             let output = result.lines.into_iter().map(|l| l.text).collect::<Vec<_>>().join("");
                             let truncated = result.dropped > 0;
-                            Ok(serde_json::json!({
-                                "output": output,
-                                "truncated": truncated,
-                            }))
+                            let resp = acp::TerminalOutputResponse::new(output, truncated);
+                            serde_json::to_value(ClientResponse::TerminalOutputResponse(resp))
+                                .map_err(|e| e.to_string())
                         }
                         Err(e) => Err(format!("failed to read terminal: {e}")),
                     }
@@ -964,21 +892,19 @@ async fn handle_agent_request(
                 None => Err("terminal not found".into()),
             }
         }
-        "terminal/waitForExit" | "terminal/wait_for_exit" => {
-            let id = params
-                .get("terminalId")
-                .and_then(|v| v.as_str())
-                .ok_or("missing terminalId")?;
+        Some(AgentRequest::WaitForTerminalExitRequest(params)) => {
+            let id = params.terminal_id.to_string();
             loop {
                 let terminals = active_terminals.lock().await;
-                match terminals.get(id) {
+                match terminals.get(&id) {
                     Some(term) => {
                         if !term.pty.is_alive() {
-                            let exit_code = term.pty.exit_code();
-                            return Ok(serde_json::json!({
-                                "exitCode": exit_code,
-                                "signal": null,
-                            }));
+                            let exit_code = term.pty.exit_code().map(|c| c as u32);
+                            let exit_status = TerminalExitStatus::new()
+                                .exit_code(exit_code);
+                            let resp = WaitForTerminalExitResponse::new(exit_status);
+                            return serde_json::to_value(ClientResponse::WaitForTerminalExitResponse(resp))
+                                .map_err(|e| e.to_string());
                         }
                     }
                     None => return Err("terminal not found".into()),
@@ -987,40 +913,44 @@ async fn handle_agent_request(
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         }
-        "terminal/kill" | "terminal/killTerminal" => {
-            let id = params
-                .get("terminalId")
-                .and_then(|v| v.as_str())
-                .ok_or("missing terminalId")?;
+        Some(AgentRequest::KillTerminalRequest(params)) => {
+            let id = params.terminal_id.to_string();
             let mut terminals = active_terminals.lock().await;
-            if let Some(term) = terminals.remove(id) {
+            if let Some(term) = terminals.remove(&id) {
                 let _ = term.pty.kill_tree();
             }
-            Ok(serde_json::json!({}))
+            let resp = KillTerminalResponse::new();
+            serde_json::to_value(ClientResponse::KillTerminalResponse(resp))
+                .map_err(|e| e.to_string())
         }
-        "terminal/release" | "terminal/releaseTerminal" => {
-            let id = params
-                .get("terminalId")
-                .and_then(|v| v.as_str())
-                .ok_or("missing terminalId")?;
+        Some(AgentRequest::ReleaseTerminalRequest(params)) => {
+            let id = params.terminal_id.to_string();
             let mut terminals = active_terminals.lock().await;
-            if let Some(term) = terminals.remove(id) {
+            if let Some(term) = terminals.remove(&id) {
                 let _ = term.pty.kill_tree();
             }
-            Ok(serde_json::json!({}))
+            let resp = ReleaseTerminalResponse::new();
+            serde_json::to_value(ClientResponse::ReleaseTerminalResponse(resp))
+                .map_err(|e| e.to_string())
         }
-        "session/requestPermission" | "session/request_permission" => {
+        Some(AgentRequest::RequestPermissionRequest(_params)) => {
             // Auto-grant with allow-once
-            Ok(serde_json::json!({
-                "outcome": {
-                    "outcome": "selected",
-                    "optionId": "allow-once"
-                }
-            }))
+            let outcome = SelectedPermissionOutcome::new(PermissionOptionId::from("allow-once"));
+            let resp = RequestPermissionResponse::new(acp::RequestPermissionOutcome::Selected(outcome));
+            serde_json::to_value(ClientResponse::RequestPermissionResponse(resp))
+                .map_err(|e| e.to_string())
         }
-        _ => {
-            warn!("Unhandled agent request: {method}");
-            Err(format!("unsupported method: {method}"))
+        Some(AgentRequest::ExtMethodRequest(ext)) => {
+            acp_log!("WARN", "Unhandled extension agent request: {}", ext.method);
+            Err(format!("unsupported extension method: {}", ext.method))
+        }
+        Some(_) => {
+            acp_log!("WARN", "Unhandled agent request variant: method={}", req.method);
+            Err(format!("unsupported agent request variant: {}", req.method))
+        }
+        None => {
+            acp_log!("WARN", "Agent request with no params: method={}", req.method);
+            Err("request missing params".into())
         }
     }
 }

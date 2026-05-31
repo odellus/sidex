@@ -863,7 +863,7 @@ pub fn run() {
             commands::acp_chat_cancel,
             commands::acp_chat_close_session,
             commands::acp_chat_list_sessions,
-            commands::acp_chat_get_queue,
+
             // Menu i18n
             commands::update_menu_labels,
         ])

@@ -100,7 +100,7 @@ export class SidexChatViewPane extends ViewPane {
 		this._viewDisposables.add(this.chatService.onDidChangeStreaming(s => this._input.setStreaming(s)));
 
 		this._viewDisposables.add(this.chatService.onDidChangeConnectionState(() => {
-			if (this.chatService.connectionState === 'connected') {
+			if (this.chatService.connectionState === 'connected' || this.chatService.connectionState === 'ready') {
 				if (this.chatService.serverModel) {
 					this._input.setModel(this.chatService.serverModel);
 				}

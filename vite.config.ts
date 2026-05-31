@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import * as path from 'path';
 import { nlsPlugin } from './scripts/vite-plugin-nls';
+import tauriBrowserProxy from 'vite-plugin-tauri-in-the-browser';
 
 function quietMissingSourceMaps() {
   const skip = [/\/vscode-textmate\/.*\.js\.map$/];
@@ -24,7 +25,7 @@ export default defineConfig({
   clearScreen: false,
   assetsInclude: ['**/*.wasm', '**/*.json', '**/*.tmLanguage.json'],
   publicDir: 'public',
-  plugins: [nlsPlugin(), quietMissingSourceMaps()],
+  plugins: [nlsPlugin(), quietMissingSourceMaps(), tauriBrowserProxy()],
   server: {
     port: 1420,
     strictPort: true,

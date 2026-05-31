@@ -11,4 +11,4 @@ pub mod session;
 
 pub use agent::{AgentConfig, AgentManager};
 pub use manager::{AcpSessionManager, SessionEvent};
-pub use session::{PromptBehavior, PromptTurnState, QueuedItem};
+pub use session::PromptTurnState;

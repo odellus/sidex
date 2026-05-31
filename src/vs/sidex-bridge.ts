@@ -11,29 +11,43 @@ declare global {
 				invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 			};
 		};
+		__TAURI_INTERNALS__?: {
+			invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+		};
 	}
 }
 
-let _invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
-
 function getInvoke(): ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null {
-	if (_invoke) {
-		return _invoke;
-	}
 	if (window.__TAURI__?.core?.invoke) {
-		_invoke = window.__TAURI__.core.invoke;
-		return _invoke;
+		return window.__TAURI__.core.invoke;
+	}
+	if (window.__TAURI_INTERNALS__?.invoke) {
+		return window.__TAURI_INTERNALS__.invoke;
 	}
 	return null;
 }
 
 export async function invoke<T = any>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
-	const fn = getInvoke();
-	if (!fn) {
-		console.warn(`[SideX] invoke(${cmd}) — Tauri not available`);
-		return null as unknown as T;
+	// Retry on transient proxy disconnections (common after page reload)
+	for (let attempt = 0; attempt < 30; attempt++) {
+		const fn = getInvoke();
+		if (!fn) {
+			await new Promise(r => setTimeout(r, 500));
+			continue;
+		}
+		try {
+			return await fn(cmd, args) as Promise<T>;
+		} catch (e: any) {
+			const msg = e?.message || String(e);
+			if (msg.includes('proxy disconnected') && attempt < 29) {
+				await new Promise(r => setTimeout(r, 1000));
+				continue;
+			}
+			throw e;
+		}
 	}
-	return fn(cmd, args) as Promise<T>;
+	console.warn(`[SideX] invoke(${cmd}) — Tauri not available`);
+	return null as unknown as T;
 }
 
 export function isTauri(): boolean {
