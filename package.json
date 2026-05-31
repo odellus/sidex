@@ -20,6 +20,7 @@
     "rust:fmt:fix": "cd src-tauri && cargo fmt --all"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.22.1",
     "@microsoft/1ds-core-js": "^4.3.11",
     "@microsoft/1ds-post-js": "^4.3.11",
     "@tauri-apps/api": "^2",

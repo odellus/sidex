@@ -4,6 +4,7 @@
  *  Ported from crow-ui's acp-store with Sidex's DI & event patterns.
  *--------------------------------------------------------------------------------------------*/
 
+import type { ContentBlock } from '@agentclientprotocol/sdk';
 import { invoke } from '../../../../sidex-bridge.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 
@@ -52,7 +53,7 @@ export interface ChatMessage {
 export interface QueuedItem {
 	id: string;
 	text: string;
-	blocks: unknown[];
+	blocks: ContentBlock[];
 }
 
 export interface SessionInfo {
@@ -216,11 +217,13 @@ export class AcpStore {
 		this._messages = [...this._messages, { role: 'user', content: text }];
 		this._onDidChange.fire();
 
+		const blocks: ContentBlock[] = [{ type: 'text' as const, text }];
+
 		try {
 			await invoke('acp_chat_prompt', {
 				request: {
 					session_id: this._sessionId,
-					blocks: [{ text }],
+					blocks,
 					behavior: 'add_to_queue',
 				},
 			});

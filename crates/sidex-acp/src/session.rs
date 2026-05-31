@@ -548,7 +548,7 @@ impl AcpSession {
 
         let req = serde_json::json!({
             "sessionId": self.session_id(),
-            "blocks": blocks
+            "prompt": blocks
         });
         let result = self.request_no_timeout("session/prompt", req).await;
 

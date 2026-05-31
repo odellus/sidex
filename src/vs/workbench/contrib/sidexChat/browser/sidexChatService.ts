@@ -123,14 +123,9 @@ class SidexChatServiceImpl implements ISidexChatService {
 			cwd,
 		});
 
-			// Once connected, we can query the agent for models
-			// For now use a sensible default
-			this._model = 'claude-sonnet-4-20250514';
-			this._onDidChangeModels.fire([
-				{ id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
-				{ id: 'claude-opus-4-20250514', name: 'Claude Opus 4' },
-				{ id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
-			]);
+			// Agent provides models via session/new response — use defaults until we wire that up
+			this._model = '';
+			this._onDidChangeModels.fire([]);
 		} catch (e) {
 			console.error('[sidexChatService] connect failed:', e);
 		}
