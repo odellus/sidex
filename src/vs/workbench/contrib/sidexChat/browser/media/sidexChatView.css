@@ -857,18 +857,6 @@
 	display: block;
 }
 
-/* ===== Streaming Cursor ===== */
-.sc-streaming-cursor {
-	display: inline-block;
-	width: 2px;
-	height: 15px;
-	background: var(--vscode-editorCursor-foreground, var(--vscode-foreground));
-	border-radius: 1px;
-	animation: sc-cursor-blink 0.8s ease-in-out infinite;
-	vertical-align: text-bottom;
-	margin-left: 1px;
-}
-
 /* ===== Markdown Renderer Classes ===== */
 .sc-code-block {
 	background: var(--vscode-textCodeBlock-background);
@@ -1100,11 +1088,6 @@
 	to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes sc-cursor-blink {
-	0%, 100% { opacity: 1; }
-	50% { opacity: 0; }
-}
-
 /* ===== Thinking Block ===== */
 .sc-thinking-block {
 	border: 1px solid var(--vscode-widget-border);
@@ -1147,7 +1130,6 @@
 	height: 6px;
 	border-radius: 50%;
 	background: var(--vscode-descriptionForeground);
-	animation: sc-thinking-pulse 1.5s ease-in-out infinite;
 }
 
 .sc-thinking-block.streaming .sc-thinking-indicator {
@@ -1190,11 +1172,6 @@
 .sc-thinking-content::-webkit-scrollbar-thumb {
 	background: var(--vscode-scrollbarSlider-background);
 	border-radius: 2px;
-}
-
-@keyframes sc-thinking-pulse {
-	0%, 100% { opacity: 0.3; }
-	50% { opacity: 1; }
 }
 
 /* ===== Inline Diff View ===== */

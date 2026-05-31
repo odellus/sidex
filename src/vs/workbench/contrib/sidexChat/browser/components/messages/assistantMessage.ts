@@ -110,6 +110,34 @@ export class AssistantMessage extends Component {
 			}
 		});
 	}
+
+	/**
+	 * Update the message body in-place. Re-renders markdown on every
+	 * chunk so bold, code blocks, etc. appear as soon as the token
+	 * completes. Incomplete tokens (e.g. an unclosed `**`) show as raw
+	 * text until the closing delimiter arrives.
+	 */
+	updateContent(msg: IChatMessage, isStreaming: boolean): void {
+		let bodyEl = this.element.querySelector('.sc-assistant-body') as HTMLElement | null;
+		if (!bodyEl && msg.content !== undefined) {
+			bodyEl = document.createElement('div');
+			bodyEl.className = 'sc-assistant-body';
+			const menuBtn = this.element.querySelector('.sc-msg-menu');
+			if (menuBtn) {
+				this.element.insertBefore(bodyEl, menuBtn);
+			} else {
+				this.element.appendChild(bodyEl);
+			}
+		}
+		if (bodyEl && msg.content !== undefined) {
+			bodyEl.innerHTML = renderMarkdown(msg.content);
+		}
+	}
+
+	/** Stop the thinking-block elapsed timer if it is still running. */
+	stopThinking(): void {
+		this._thinkingBlock?.stopStreaming();
+	}
 }
 
 const READ_TOOLS = new Set([

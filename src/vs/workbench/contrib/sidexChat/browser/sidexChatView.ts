@@ -171,6 +171,9 @@ export class SidexChatViewPane extends ViewPane {
 
 		// Messages were cleared — reset everything
 		if (messages.length < this._renderedMessageCount) {
+			for (const comp of this._messageComponents.values()) {
+				comp.dispose();
+			}
 			DOM.clearNode(this._messagesEl);
 			this._messageComponents.clear();
 			this._renderedMessageCount = 0;
@@ -186,22 +189,32 @@ export class SidexChatViewPane extends ViewPane {
 			const lastIdx = messages.length - 1;
 			const lastMsg = messages[lastIdx];
 			if (lastMsg.role === 'assistant') {
-				const oldComp = this._messageComponents.get(lastIdx);
-				if (oldComp) {
-					oldComp.element.remove();
+				const comp = this._messageComponents.get(lastIdx);
+				if (comp instanceof AssistantMessage) {
+					// Turn ended with tool calls — one recreate to render them properly
+					if (!this.chatService.isStreaming && lastMsg.toolCalls && lastMsg.toolCalls.length > 0) {
+						comp.dispose();
+						comp.element.remove();
+						const duration = this._turnStartTime > 0 ? Date.now() - this._turnStartTime : 0;
+						const newComp = new AssistantMessage(lastMsg, duration, (filePath) => {
+							this._openFile(filePath);
+						}, false);
+						newComp.appendTo(this._messagesEl);
+						this._viewDisposables.add(newComp);
+						this._viewDisposables.add(newComp.onCopy(text => {
+							navigator.clipboard.writeText(text).catch(() => { /* ignore */ });
+						}));
+						this._messageComponents.set(lastIdx, newComp);
+						this._currentAssistantComp = newComp;
+					} else {
+						// Streaming or turn ended without tool calls — update body in place
+						comp.updateContent(lastMsg, this.chatService.isStreaming);
+						if (!this.chatService.isStreaming) {
+							comp.stopThinking();
+						}
+						this._currentAssistantComp = comp;
+					}
 				}
-				const duration = this._turnStartTime > 0 ? Date.now() - this._turnStartTime : 0;
-				const isThinking = this.chatService.isThinking;
-				const comp = new AssistantMessage(lastMsg, duration, (filePath) => {
-					this._openFile(filePath);
-				}, isThinking);
-				comp.appendTo(this._messagesEl);
-				this._viewDisposables.add(comp);
-				this._viewDisposables.add(comp.onCopy(text => {
-					navigator.clipboard.writeText(text).catch(() => { /* ignore */ });
-				}));
-				this._messageComponents.set(lastIdx, comp);
-				this._currentAssistantComp = comp;
 			}
 		} else {
 			// Only append new messages
@@ -232,14 +245,6 @@ export class SidexChatViewPane extends ViewPane {
 		}
 
 		this._renderedMessageCount = messages.length;
-
-		if (this.chatService.isStreaming) {
-			const cursor = document.createElement('span');
-			cursor.className = 'sc-streaming-cursor';
-			const lastBody = this._messagesEl.querySelector('.sc-assistant-msg:last-child .sc-assistant-body');
-			if (lastBody) { lastBody.appendChild(cursor); }
-		}
-
 		this._scrollToBottom();
 	}
 
