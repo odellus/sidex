@@ -831,13 +831,25 @@ async fn handle_agent_request(
                 .get("path")
                 .and_then(|v| v.as_str())
                 .ok_or("missing path")?;
+            let line: Option<usize> = params.get("line").and_then(|v| v.as_u64()).map(|n| n as usize);
+            let limit: Option<usize> = params.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize);
             match tokio::task::spawn_blocking({
                 let path = path.to_string();
                 move || sidex_workspace::file_ops::read_file(std::path::Path::new(&path))
             })
             .await
             {
-                Ok(Ok(content)) => Ok(serde_json::json!({"content": content})),
+                Ok(Ok(content)) => {
+                    if line.is_some() || limit.is_some() {
+                        let lines: Vec<&str> = content.lines().collect();
+                        let start = line.map(|l| l.saturating_sub(1)).unwrap_or(0);
+                        let end = limit.map(|lim| (start + lim).min(lines.len())).unwrap_or(lines.len());
+                        let sliced = lines[start..end].join("\n");
+                        Ok(serde_json::json!({"content": sliced}))
+                    } else {
+                        Ok(serde_json::json!({"content": content}))
+                    }
+                },
                 Ok(Err(e)) => Err(format!("failed to read file: {e}")),
                 Err(e) => Err(format!("task failed: {e}")),
             }
@@ -858,7 +870,7 @@ async fn handle_agent_request(
             })
             .await
             {
-                Ok(Ok(())) => Ok(serde_json::json!({"success": true})),
+                Ok(Ok(())) => Ok(serde_json::json!({})),
                 Ok(Err(e)) => Err(format!("failed to write file: {e}")),
                 Err(e) => Err(format!("task failed: {e}")),
             }
@@ -880,6 +892,14 @@ async fn handle_agent_request(
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|v| {
+                            // ACP EnvVariable format: { name: "KEY", value: "VAL" }
+                            if let (Some(name), Some(val)) = (
+                                v.get("name").and_then(|n| n.as_str()),
+                                v.get("value").and_then(|val| val.as_str()),
+                            ) {
+                                return Some((name.to_string(), val.to_string()));
+                            }
+                            // Legacy format: "KEY=VALUE" string
                             v.as_str().and_then(|s| {
                                 s.split_once('=')
                                     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -976,7 +996,7 @@ async fn handle_agent_request(
             if let Some(term) = terminals.remove(id) {
                 let _ = term.pty.kill_tree();
             }
-            Ok(serde_json::json!({"success": true}))
+            Ok(serde_json::json!({}))
         }
         "terminal/release" | "terminal/releaseTerminal" => {
             let id = params
@@ -987,7 +1007,7 @@ async fn handle_agent_request(
             if let Some(term) = terminals.remove(id) {
                 let _ = term.pty.kill_tree();
             }
-            Ok(serde_json::json!({"success": true}))
+            Ok(serde_json::json!({}))
         }
         "session/requestPermission" | "session/request_permission" => {
             // Auto-grant with allow-once

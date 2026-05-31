@@ -224,7 +224,6 @@ export class AcpStore {
 				request: {
 					session_id: this._sessionId,
 					blocks,
-					behavior: 'add_to_queue',
 				},
 			});
 		} catch (e) {

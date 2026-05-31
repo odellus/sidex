@@ -23,6 +23,7 @@ parking_lot = { workspace = true }
 # Process management
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
+agent-client-protocol-schema = "0.13.4"
 
 [lints]
 workspace = true

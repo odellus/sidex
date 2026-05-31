@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
-use sidex_acp::{AgentConfig, AcpSessionManager, PromptBehavior, SessionEvent};
+use sidex_acp::{AgentConfig, AcpSessionManager, SessionEvent};
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -128,8 +128,6 @@ pub struct NewSessionResponse {
 pub struct PromptRequest {
     pub session_id: String,
     pub blocks: Vec<Value>,
-    #[serde(default)]
-    pub behavior: PromptBehavior,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,7 +212,7 @@ pub async fn acp_chat_prompt(
         })?;
 
     session
-        .prompt_with_behavior(request.blocks, request.behavior)
+        .prompt(request.blocks)
         .await
         .map_err(|e| {
             log::error!("[acp_chat] prompt failed: {e}");
