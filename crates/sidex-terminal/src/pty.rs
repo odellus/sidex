@@ -145,7 +145,7 @@ impl RingBuffer {
     }
 
     pub fn get_lines(&self, max: Option<usize>) -> Vec<OutputChunk> {
-        let n = max.unwrap_or(100).min(self.buffer.len());
+        let n = max.unwrap_or(self.buffer.len()).min(self.buffer.len());
         self.buffer.iter().rev().take(n).rev().cloned().collect()
     }
 

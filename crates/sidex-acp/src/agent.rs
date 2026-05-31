@@ -307,6 +307,13 @@ impl AgentManager {
         }
     }
 
+    /// Return the captured shell environment (PATH from .bashrc/.zshrc, etc.).
+    pub async fn shell_env(&self) -> HashMap<String, String> {
+        let mut cache = self.shell_env.lock().await;
+        capture_shell_env(&mut cache).await;
+        cache.env.clone()
+    }
+
     /// List all running agent IDs.
     pub async fn list(&self) -> Vec<String> {
         self.agents.lock().await.keys().cloned().collect()

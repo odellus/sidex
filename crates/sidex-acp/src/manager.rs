@@ -35,7 +35,8 @@ impl AcpSessionManager {
     /// Spawn + initialize a new connection.
     /// Returns the connection_id.
     pub async fn init_connection(&self, config: AgentConfig, cwd: String) -> Result<String> {
-        let session = AcpSession::spawn(&self.agent_manager, config, cwd).await?;
+        let shell_env = self.agent_manager.shell_env().await;
+        let session = AcpSession::spawn(&self.agent_manager, config, cwd, shell_env).await?;
         session.initialize().await?;
         let connection_id = session.connection_id.clone();
         self.connections.lock().await.insert(connection_id.clone(), session);
@@ -195,7 +196,8 @@ impl AcpSessionManager {
             env,
         };
 
-        let session = AcpSession::spawn(&self.agent_manager, config, cwd).await?;
+        let shell_env = self.agent_manager.shell_env().await;
+        let session = AcpSession::spawn(&self.agent_manager, config, cwd, shell_env).await?;
         session.initialize().await?;
         session.new_session(mcp_servers).await?;
         let session_id = session.session_id();

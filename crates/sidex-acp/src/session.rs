@@ -21,7 +21,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use agent_client_protocol_schema as acp;
 use acp::{
-    AgentNotification, AgentRequest, CancelNotification, ClientCapabilities,
+    AgentNotification, CancelNotification, ClientCapabilities,
     ClientResponse, ContentBlock, FileSystemCapabilities, Implementation,
     InitializeRequest, JsonRpcMessage, KillTerminalResponse, ListSessionsRequest,
     LoadSessionRequest, NewSessionRequest, Notification, PermissionOptionId,
@@ -157,6 +157,7 @@ impl AcpSession {
         agent_manager: &AgentManager,
         config: AgentConfig,
         cwd: String,
+        shell_env: HashMap<String, String>,
     ) -> Result<Arc<Self>> {
         let agent_id = agent_manager
             .spawn(&config, &cwd)
@@ -187,6 +188,8 @@ impl AcpSession {
         let stdin_tx_clone = stdin_tx.clone();
         let active_terminals = Arc::new(Mutex::new(HashMap::<String, SessionTerminal>::new()));
         let active_terminals_for_io = active_terminals.clone();
+        let shell_env = Arc::new(shell_env);
+        let shell_env_for_io = shell_env.clone();
 
         let connection_id = uuid::Uuid::new_v4().to_string();
         let connection_id_for_io = connection_id.clone();
@@ -216,6 +219,7 @@ impl AcpSession {
                             &session_id_cell_clone,
                             &stdin_tx_clone,
                             &active_terminals_for_io,
+                            &shell_env_for_io,
                         )
                         .await
                         {
@@ -695,6 +699,7 @@ async fn handle_agent_line(
     session_id_cell: &Mutex<String>,
     stdin_tx: &mpsc::Sender<String>,
     active_terminals: &Arc<Mutex<HashMap<String, SessionTerminal>>>,
+    shell_env: &Arc<HashMap<String, String>>,
 ) -> Result<()> {
     // 1. Try response first (has id + result/error, no method)
     if let Ok(msg) = serde_json::from_str::<JsonRpcMessage<acp::Response<Value>>>(line) {
@@ -725,34 +730,41 @@ async fn handle_agent_line(
     }
 
     // 2. Try request from agent (has id + method)
-    if let Ok(msg) = serde_json::from_str::<JsonRpcMessage<Request<AgentRequest>>>(line) {
-        let req = msg.into_inner();
-        let id = req.id.clone();
-        let session_id = session_id_cell.lock().await.clone();
-        let active_terminals = active_terminals.clone();
-        let stdin_tx = stdin_tx.clone();
-        tokio::spawn(async move {
-            let result = handle_agent_request(&req, &active_terminals, &session_id).await;
-            let response = match result {
-                Ok(res) => JsonRpcMessage::wrap(Response::Result { id: id.clone(), result: res }),
-                Err(err) => JsonRpcMessage::wrap(Response::Error {
-                    id: id.clone(),
-                    error: acp::Error::new(-32600, err),
-                }),
-            };
-            let line = match serde_json::to_string(&response) {
-                Ok(l) => l,
-                Err(e) => {
-                    acp_log!("ERROR", "Failed to serialize response: {}", e);
-                    return;
+    // Parse as raw Value first — AgentRequest is #[serde(untagged)] and variants
+    // with identical fields (terminal/*) all deserialize as the first match.
+    // We MUST route by method and access params as raw JSON, matching crow-ui.
+    if let Ok(val) = serde_json::from_str::<Value>(line) {
+        if let (Some(id_val), Some(method)) = (
+            val.get("id"),
+            val.get("method").and_then(|m| m.as_str()),
+        ) {
+            let id = serde_json::from_value::<RequestId>(id_val.clone()).unwrap_or(RequestId::Number(0));
+            let params = val.get("params").cloned().unwrap_or(Value::Null);
+            let session_id = session_id_cell.lock().await.clone();
+            let active_terminals = active_terminals.clone();
+            let stdin_tx = stdin_tx.clone();
+            let shell_env = shell_env.clone();
+            let method = method.to_string();
+            tokio::spawn(async move {
+                let result = handle_agent_request(&method, &params, active_terminals, &session_id, &shell_env).await;
+                let response = match result {
+                    Ok(res) => serde_json::json!({"jsonrpc": "2.0", "id": id, "result": res}),
+                    Err(err) => serde_json::json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32600, "message": err}}),
+                };
+                let line = match serde_json::to_string(&response) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        acp_log!("ERROR", "Failed to serialize response: {}", e);
+                        return;
+                    }
+                };
+                acp_log!("SEND_RAW", "agent_request_response id={:?} json={}", id, line);
+                if let Err(e) = stdin_tx.send(line).await {
+                    acp_log!("ERROR", "Failed to send response to agent stdin: {}", e);
                 }
-            };
-            acp_log!("SEND_RAW", "agent_request_response id={:?} json={}", id, line);
-            if let Err(e) = stdin_tx.send(line).await {
-                acp_log!("ERROR", "Failed to send response to agent stdin: {}", e);
-            }
-        });
-        return Ok(());
+            });
+            return Ok(());
+        }
     }
 
     // 3. Try notification from agent (has method, no id)
@@ -780,17 +792,19 @@ async fn handle_agent_line(
 }
 
 async fn handle_agent_request(
-    req: &Request<AgentRequest>,
-    active_terminals: &Mutex<HashMap<String, SessionTerminal>>,
+    method: &str,
+    params: &Value,
+    active_terminals: Arc<Mutex<HashMap<String, SessionTerminal>>>,
     _session_id: &str,
+    shell_env: &HashMap<String, String>,
 ) -> Result<Value, String> {
-    match req.params.as_ref() {
-        Some(AgentRequest::ReadTextFileRequest(params)) => {
-            let path = params.path.to_string_lossy().to_string();
-            let line = params.line.map(|l| l as usize);
-            let limit = params.limit.map(|l| l as usize);
+    match method {
+        "fs/readTextFile" | "fs/read_text_file" => {
+            let path = params.get("path").and_then(|v| v.as_str()).ok_or("missing path")?;
+            let line = params.get("line").and_then(|v| v.as_u64()).map(|v| v as usize);
+            let limit = params.get("limit").and_then(|v| v.as_u64()).map(|v| v as usize);
             match tokio::task::spawn_blocking({
-                let path = path.clone();
+                let path = path.to_string();
                 move || sidex_workspace::file_ops::read_file(std::path::Path::new(&path))
             })
             .await
@@ -812,12 +826,12 @@ async fn handle_agent_request(
                 Err(e) => Err(format!("task failed: {e}")),
             }
         }
-        Some(AgentRequest::WriteTextFileRequest(params)) => {
-            let path = params.path.to_string_lossy().to_string();
-            let content = &params.content;
+        "fs/writeTextFile" | "fs/write_text_file" => {
+            let path = params.get("path").and_then(|v| v.as_str()).ok_or("missing path")?;
+            let content = params.get("content").and_then(|v| v.as_str()).unwrap_or("");
             match tokio::task::spawn_blocking({
-                let path = path.clone();
-                let content = content.clone();
+                let path = path.to_string();
+                let content = content.to_string();
                 move || sidex_workspace::file_ops::write_file(std::path::Path::new(&path), &content)
             })
             .await
@@ -831,25 +845,36 @@ async fn handle_agent_request(
                 Err(e) => Err(format!("task failed: {e}")),
             }
         }
-        Some(AgentRequest::CreateTerminalRequest(params)) => {
-            let command = &params.command;
-            let args = params.args.clone();
-            let env: HashMap<String, String> = params
-                .env
-                .iter()
-                .map(|e| (e.name.clone(), e.value.clone()))
-                .collect();
-            let cwd = params.cwd.as_ref().map(|p| p.to_string_lossy().to_string());
+        "terminal/create" | "terminal/createTerminal" => {
+            let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            let args: Vec<String> = params.get("args")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            let mut env: HashMap<String, String> = shell_env.clone();
+            if let Some(env_arr) = params.get("env").and_then(|v| v.as_array()) {
+                for item in env_arr {
+                    if let (Some(name), Some(value)) = (item.get("name").and_then(|v| v.as_str()), item.get("value").and_then(|v| v.as_str())) {
+                        env.insert(name.to_string(), value.to_string());
+                    } else if let Some(s) = item.as_str() {
+                        if let Some((k, v)) = s.split_once('=') {
+                            env.insert(k.to_string(), v.to_string());
+                        }
+                    }
+                }
+            }
+            let cwd = params.get("cwd").and_then(|v| v.as_str()).map(String::from);
 
-            let shell = if command.is_empty() {
-                sidex_terminal::detect_default_shell()
+            let shell = sidex_terminal::detect_default_shell();
+            let cmd_str = if args.is_empty() {
+                command.to_string()
             } else {
-                command.clone()
+                format!("{} {}", command, args.join(" "))
             };
 
             let spawn_config = sidex_terminal::PtySpawnConfig {
                 shell: Some(shell),
-                args: if args.is_empty() { None } else { Some(args) },
+                args: Some(vec!["-c".to_string(), cmd_str]),
                 cwd: cwd.map(std::path::PathBuf::from),
                 env,
                 size: sidex_terminal::TerminalSize { rows: 24, cols: 80 },
@@ -860,11 +885,32 @@ async fn handle_agent_request(
                 Ok(Ok(pty)) => {
                     let handle = sidex_terminal::TermHandle::next();
                     let id = format!("term_{}", handle.0);
-                    let _ = pty.read_output(Some(100));
+                    let _ = pty.read_output(None);
                     {
                         let mut terminals = active_terminals.lock().await;
                         terminals.insert(id.clone(), SessionTerminal { handle, pty });
                     }
+                    let active_terminals_clone = active_terminals.clone();
+                    let drain_id = id.clone();
+                    tokio::spawn(async move {
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            let is_alive = {
+                                let terminals = active_terminals_clone.lock().await;
+                                if let Some(term) = terminals.get(&drain_id) {
+                                    match term.pty.read_output(None) {
+                                        Ok(result) => result.is_alive,
+                                        Err(_) => false,
+                                    }
+                                } else {
+                                    break;
+                                }
+                            };
+                            if !is_alive {
+                                break;
+                            }
+                        }
+                    });
                     let resp = acp::CreateTerminalResponse::new(acp::TerminalId::from(id));
                     serde_json::to_value(ClientResponse::CreateTerminalResponse(resp))
                         .map_err(|e| e.to_string())
@@ -873,16 +919,21 @@ async fn handle_agent_request(
                 Err(e) => Err(format!("task failed: {e}")),
             }
         }
-        Some(AgentRequest::TerminalOutputRequest(params)) => {
-            let id = params.terminal_id.to_string();
+        "terminal/output" | "terminal/terminalOutput" => {
+            let id = params.get("terminalId").and_then(|v| v.as_str()).ok_or("missing terminalId")?;
             let terminals = active_terminals.lock().await;
-            match terminals.get(&id) {
+            match terminals.get(id) {
                 Some(term) => {
-                    match term.pty.read_output(Some(1000)) {
+                    match term.pty.read_output(None) {
                         Ok(result) => {
                             let output = result.lines.into_iter().map(|l| l.text).collect::<Vec<_>>().join("");
                             let truncated = result.dropped > 0;
-                            let resp = acp::TerminalOutputResponse::new(output, truncated);
+                            let mut resp = acp::TerminalOutputResponse::new(output, truncated);
+                            if !result.is_alive {
+                                let exit_code = term.pty.exit_code().map(|c| c as u32);
+                                let exit_status = TerminalExitStatus::new().exit_code(exit_code);
+                                resp = resp.exit_status(exit_status);
+                            }
                             serde_json::to_value(ClientResponse::TerminalOutputResponse(resp))
                                 .map_err(|e| e.to_string())
                         }
@@ -892,11 +943,11 @@ async fn handle_agent_request(
                 None => Err("terminal not found".into()),
             }
         }
-        Some(AgentRequest::WaitForTerminalExitRequest(params)) => {
-            let id = params.terminal_id.to_string();
+        "terminal/waitForExit" | "terminal/wait_for_exit" => {
+            let id = params.get("terminalId").and_then(|v| v.as_str()).ok_or("missing terminalId")?;
             loop {
                 let terminals = active_terminals.lock().await;
-                match terminals.get(&id) {
+                match terminals.get(id) {
                     Some(term) => {
                         if !term.pty.is_alive() {
                             let exit_code = term.pty.exit_code().map(|c| c as u32);
@@ -913,44 +964,141 @@ async fn handle_agent_request(
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         }
-        Some(AgentRequest::KillTerminalRequest(params)) => {
-            let id = params.terminal_id.to_string();
+        "terminal/kill" | "terminal/killTerminal" => {
+            let id = params.get("terminalId").and_then(|v| v.as_str()).ok_or("missing terminalId")?;
             let mut terminals = active_terminals.lock().await;
-            if let Some(term) = terminals.remove(&id) {
+            if let Some(term) = terminals.remove(id) {
                 let _ = term.pty.kill_tree();
             }
             let resp = KillTerminalResponse::new();
             serde_json::to_value(ClientResponse::KillTerminalResponse(resp))
                 .map_err(|e| e.to_string())
         }
-        Some(AgentRequest::ReleaseTerminalRequest(params)) => {
-            let id = params.terminal_id.to_string();
+        "terminal/release" | "terminal/releaseTerminal" => {
+            let id = params.get("terminalId").and_then(|v| v.as_str()).ok_or("missing terminalId")?;
             let mut terminals = active_terminals.lock().await;
-            if let Some(term) = terminals.remove(&id) {
+            if let Some(term) = terminals.remove(id) {
                 let _ = term.pty.kill_tree();
             }
             let resp = ReleaseTerminalResponse::new();
             serde_json::to_value(ClientResponse::ReleaseTerminalResponse(resp))
                 .map_err(|e| e.to_string())
         }
-        Some(AgentRequest::RequestPermissionRequest(_params)) => {
-            // Auto-grant with allow-once
+        "session/requestPermission" | "session/request_permission" => {
             let outcome = SelectedPermissionOutcome::new(PermissionOptionId::from("allow-once"));
             let resp = RequestPermissionResponse::new(acp::RequestPermissionOutcome::Selected(outcome));
             serde_json::to_value(ClientResponse::RequestPermissionResponse(resp))
                 .map_err(|e| e.to_string())
         }
-        Some(AgentRequest::ExtMethodRequest(ext)) => {
-            acp_log!("WARN", "Unhandled extension agent request: {}", ext.method);
-            Err(format!("unsupported extension method: {}", ext.method))
+        _ => {
+            acp_log!("WARN", "Unhandled agent request: {}", method);
+            Err(format!("unsupported method: {}", method))
         }
-        Some(_) => {
-            acp_log!("WARN", "Unhandled agent request variant: method={}", req.method);
-            Err(format!("unsupported agent request variant: {}", req.method))
+    }
+}
+
+// ─── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that TerminalOutputResponse serializes to the exact JSON shape
+    /// the crow-cli agent expects, including exit_status.
+    #[test]
+    fn terminal_output_response_serializes_correctly() {
+        let resp = acp::TerminalOutputResponse::new("hello\nworld", false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(Some(0u32)));
+        let val = serde_json::to_value(ClientResponse::TerminalOutputResponse(resp)).unwrap();
+
+        assert_eq!(val["output"], "hello\nworld");
+        assert_eq!(val["truncated"], false);
+        assert!(val["exitStatus"].is_object());
+        assert_eq!(val["exitStatus"]["exitCode"], 0);
+    }
+
+    /// Verify TerminalOutputResponse without exit_status omits the field.
+    #[test]
+    fn terminal_output_response_omits_exit_status_when_none() {
+        let resp = acp::TerminalOutputResponse::new("hello", false);
+        let val = serde_json::to_value(ClientResponse::TerminalOutputResponse(resp)).unwrap();
+
+        assert_eq!(val["output"], "hello");
+        assert_eq!(val["truncated"], false);
+        assert!(val.get("exitStatus").is_none());
+    }
+
+    /// Verify ReadTextFileResponse serializes to the expected shape.
+    #[test]
+    fn read_text_file_response_serializes_correctly() {
+        let resp = ReadTextFileResponse::new("file contents here");
+        let val = serde_json::to_value(ClientResponse::ReadTextFileResponse(resp)).unwrap();
+
+        assert_eq!(val["content"], "file contents here");
+    }
+
+    /// Spawn a real PTY, run a short command, and assert we can read the
+    /// full output including exit status — no e2e app required.
+    #[test]
+    fn pty_read_output_returns_full_output_and_exit_status() {
+        let config = sidex_terminal::PtySpawnConfig {
+            shell: Some(sidex_terminal::detect_default_shell()),
+            args: Some(vec!["-c".to_string(), "echo hello world".to_string()]),
+            cwd: None,
+            env: std::collections::HashMap::new(),
+            size: sidex_terminal::TerminalSize { rows: 24, cols: 80 },
+        };
+
+        let pty = sidex_terminal::PtyProcess::spawn(&config).expect("spawn pty");
+
+        // Give the shell time to execute the command and exit.
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        // read_output(None) must return the complete output (not truncated).
+        let result = pty.read_output(None).expect("read output");
+        let output = result.lines.iter().map(|l| l.text.as_str()).collect::<String>();
+
+        assert!(
+            output.contains("hello world"),
+            "expected 'hello world' in PTY output, got: {output:?}"
+        );
+
+        // Process should have exited.
+        assert!(!result.is_alive, "PTY should not be alive after echo exits");
+
+        // Exit code should be available.
+        let exit_code = pty.exit_code();
+        assert_eq!(exit_code, Some(0), "echo should exit with code 0");
+    }
+
+    /// Verify that a command producing many lines of output is NOT truncated
+    /// when read with read_output(None).
+    #[test]
+    fn pty_read_output_none_does_not_truncate() {
+        let config = sidex_terminal::PtySpawnConfig {
+            shell: Some(sidex_terminal::detect_default_shell()),
+            args: Some(vec!["-c".to_string(), "for i in $(seq 1 2000); do echo line_$i; done".to_string()]),
+            cwd: None,
+            env: std::collections::HashMap::new(),
+            size: sidex_terminal::TerminalSize { rows: 24, cols: 80 },
+        };
+
+        let pty = sidex_terminal::PtyProcess::spawn(&config).expect("spawn pty");
+
+        // Periodically drain the channel into the ring buffer while the
+        // command runs, mirroring the background task in production.
+        let start = std::time::Instant::now();
+        while pty.is_alive() && start.elapsed() < std::time::Duration::from_secs(5) {
+            let _ = pty.read_output(None);
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        None => {
-            acp_log!("WARN", "Agent request with no params: method={}", req.method);
-            Err("request missing params".into())
-        }
+        // Final drain after process exits.
+        let result = pty.read_output(None).expect("read output");
+        let output = result.lines.iter().map(|l| l.text.as_str()).collect::<String>();
+
+        // Should contain line_1, line_2000, etc.
+        assert!(output.contains("line_1"), "output should contain line_1");
+        assert!(output.contains("line_2000"), "output should contain line_2000");
+        assert_eq!(result.dropped, 0, "no lines should be dropped with read_output(None)");
     }
 }
