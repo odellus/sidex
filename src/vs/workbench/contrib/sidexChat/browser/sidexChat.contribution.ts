@@ -39,7 +39,7 @@ const viewContainer = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewCo
 		hideIfEmpty: false,
 		order: -100,
 	},
-	ViewContainerLocation.Sidex,
+	ViewContainerLocation.AuxiliaryBar,
 	{ isDefault: true, doNotRegisterOpenCommand: true }
 );
 
@@ -50,8 +50,8 @@ Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews(
 			name: nls.localize2('sidex', 'Sidex'),
 			containerIcon: sidexChatIcon,
 			ctorDescriptor: new SyncDescriptor(SidexChatViewPane),
-			canToggleVisibility: false,
-			canMoveView: false,
+			canToggleVisibility: true,
+			canMoveView: true,
 			hideByDefault: false,
 		},
 	],
@@ -73,7 +73,7 @@ registerAction2(class extends Action2 {
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const layoutService = accessor.get(IWorkbenchLayoutService);
-		layoutService.setPartHidden(layoutService.isVisible(Parts.SIDEX_PART), Parts.SIDEX_PART);
+		layoutService.setPartHidden(layoutService.isVisible(Parts.AUXILIARYBAR_PART), Parts.AUXILIARYBAR_PART);
 	}
 });
 
@@ -87,8 +87,8 @@ registerAction2(class extends Action2 {
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const layoutService = accessor.get(IWorkbenchLayoutService);
-		const isVisible = layoutService.isVisible(Parts.SIDEX_PART);
-		layoutService.setPartHidden(isVisible, Parts.SIDEX_PART);
+		const isVisible = layoutService.isVisible(Parts.AUXILIARYBAR_PART);
+		layoutService.setPartHidden(isVisible, Parts.AUXILIARYBAR_PART);
 	}
 });
 
@@ -164,13 +164,13 @@ class SidexStatusBarContribution implements IWorkbenchContribution {
 	}
 
 	private _sidexIcon(): string {
-		return this.layoutService.isVisible(Parts.SIDEX_PART)
+		return this.layoutService.isVisible(Parts.AUXILIARYBAR_PART)
 			? '$(sidex-panel-open)'
 			: '$(sidex-panel-closed)';
 	}
 
 	private _sidexTooltip(): string {
-		return this.layoutService.isVisible(Parts.SIDEX_PART) ? 'Hide Sidex' : 'Show Sidex';
+		return this.layoutService.isVisible(Parts.AUXILIARYBAR_PART) ? 'Hide Sidex' : 'Show Sidex';
 	}
 
 	private _auxIcon(): string {

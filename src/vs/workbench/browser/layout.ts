@@ -3584,13 +3584,13 @@ const LayoutStateKeys = {
 		'auxiliaryBar.hidden',
 		StorageScope.WORKSPACE,
 		StorageTarget.MACHINE,
-		true
+		false
 	),
 	SIDEX_HIDDEN: new RuntimeStateKey<boolean>(
 		'sidex.hidden',
 		StorageScope.WORKSPACE,
 		StorageTarget.MACHINE,
-		false
+		true
 	),
 	STATUSBAR_HIDDEN: new RuntimeStateKey<boolean>(
 		'statusBar.hidden',
