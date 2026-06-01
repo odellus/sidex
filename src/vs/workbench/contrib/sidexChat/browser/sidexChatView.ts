@@ -14,25 +14,34 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
-import { ISidexChatService, IChatMessage } from './sidexChatService.js';
+import { ISidexChatService } from './sidexChatService.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
-import { IEditorService } from '../../../services/editor/common/editorService.js';
-import { URI } from '../../../../base/common/uri.js';
 import { ChatHeader } from './components/toolbar/chatHeader.js';
 import { ChatInput } from './components/input/chatInput.js';
 import { UserMessage } from './components/messages/userMessage.js';
-import { AssistantMessage } from './components/messages/assistantMessage.js';
-import { PermissionRequestDialog, PermissionRequestData } from './components/messages/permissionRequest.js';
+import { ThinkingBlock } from './components/messages/thinkingBlock.js';
+import { AgentMessageGroup } from './components/messages/agentMessage.js';
+import { ToolCallGroup } from './components/tools/toolCallGroup.js';
+import type { AcpNotification } from './acp-utils.js';
 
 const $ = DOM.$;
+
+interface GroupComponent {
+	type: string;
+	component: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup;
+}
 
 export class SidexChatViewPane extends ViewPane {
 	private _header!: ChatHeader;
 	private _messagesEl!: HTMLElement;
 	private _welcomeEl!: HTMLElement;
 	private _input!: ChatInput;
-	private _turnStartTime = 0;
 	private readonly _viewDisposables = this._register(new DisposableStore());
+
+	// Group-based rendering state
+	private _groupComponents: GroupComponent[] = [];
+	private _lastGroupType: string | null = null;
+	private _lastGroupComp: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup | null = null;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -46,7 +55,6 @@ export class SidexChatViewPane extends ViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@ISidexChatService private readonly chatService: ISidexChatService,
-		@IEditorService private readonly editorService: IEditorService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -61,8 +69,8 @@ export class SidexChatViewPane extends ViewPane {
 
 		this._messagesEl = DOM.append(parent, $('div.sc-messages'));
 		this._welcomeEl = DOM.append(this._messagesEl, $('div.sc-welcome'));
-		DOM.append(this._welcomeEl, $('div.sc-welcome-title')).textContent = 'Sidex';
-		DOM.append(this._welcomeEl, $('div.sc-welcome-subtitle')).textContent = 'Ask anything about your code';
+		DOM.append(this._welcomeEl, $('div.sc-welcome-title')).textContent = 'crow-cli';
+		DOM.append(this._welcomeEl, $('div.sc-welcome-subtitle')).textContent = 'Ask anything';
 
 		this._input = new ChatInput();
 		this._input.appendTo(parent);
@@ -74,7 +82,6 @@ export class SidexChatViewPane extends ViewPane {
 
 	private _bindEvents(): void {
 		this._viewDisposables.add(this._input.onSend(text => {
-			this._turnStartTime = Date.now();
 			this.chatService.sendMessage(text);
 		}));
 		this._viewDisposables.add(this._input.onStop(() => this.chatService.stopStreaming()));
@@ -82,7 +89,9 @@ export class SidexChatViewPane extends ViewPane {
 
 		this._viewDisposables.add(this._header.onNewChat(() => this.chatService.clearMessages()));
 
-		this._viewDisposables.add(this._header.onHistory(() => this._fetchSessions()));
+		this._viewDisposables.add(this._header.onHistory(() => {
+			this._fetchSessions();
+		}));
 
 		this._viewDisposables.add(this._header.onSelectSession(sessionId => {
 			this.chatService.loadSession(sessionId);
@@ -96,8 +105,13 @@ export class SidexChatViewPane extends ViewPane {
 			}
 		}));
 
-		this._viewDisposables.add(this.chatService.onDidChangeMessages(msgs => this._renderMessages(msgs)));
-		this._viewDisposables.add(this.chatService.onDidChangeStreaming(s => this._input.setStreaming(s)));
+		this._viewDisposables.add(this.chatService.onDidChangeNotifications(() => this._onNotificationAdded()));
+		this._viewDisposables.add(this.chatService.onDidChangeStreaming(s => {
+			this._input.setStreaming(s);
+			if (!s && this._lastGroupComp) {
+				this._lastGroupComp.stopStreaming();
+			}
+		}));
 
 		this._viewDisposables.add(this.chatService.onDidChangeConnectionState(() => {
 			if (this.chatService.connectionState === 'connected' || this.chatService.connectionState === 'ready') {
@@ -110,7 +124,7 @@ export class SidexChatViewPane extends ViewPane {
 
 		this._viewDisposables.add(this.chatService.onDidChangeModels(models => {
 			this._input.setAvailableModels(models);
-			// Show the current model and mark it active in the dropdown
+			// Show the current model and make it active in the dropdown
 			const currentModel = this.chatService.serverModel;
 			if (currentModel) {
 				this._input.setModel(currentModel);
@@ -126,126 +140,105 @@ export class SidexChatViewPane extends ViewPane {
 			this._input.setModel(this.chatService.serverModel);
 		}
 
-		this._viewDisposables.add(this.chatService.onDidReceiveChunk(chunk => {
-			if (chunk.type === 'brief' && chunk.content) {
-				const text = chunk.content.startsWith('BRIEF:') ? chunk.content.slice(6) : chunk.content;
+		this._viewDisposables.add(this.chatService.onDidReceiveControlSignal(signal => {
+			if (signal.type === 'brief' && signal.content) {
+				const text = signal.content.startsWith('BRIEF:') ? signal.content.slice(6) : signal.content;
 				this._header.showBrief(text);
 			}
-			if (chunk.type === 'mode_change' && (chunk as any).mode) {
-				this._input.setMode((chunk as any).mode as 'agent' | 'plan' | 'ask');
-			}
-			if (chunk.type === 'thinking' && chunk.content) {
-				const comp = this._currentAssistantComp;
-				if (comp?.thinkingBlock) {
-					comp.thinkingBlock.appendContent(chunk.content);
-				}
-			}
-			if (chunk.type === 'thinking_done') {
-				const comp = this._currentAssistantComp;
-				if (comp?.thinkingBlock) {
-					comp.thinkingBlock.stopStreaming();
-				}
-			}
-			if (chunk.type === 'permission_request' && chunk.tool_call_id && chunk.tool_name) {
+			if (signal.type === 'permission_request' && signal.tool_call_id && signal.tool_name) {
 				this._showPermissionDialog({
-					toolCallId: chunk.tool_call_id,
-					toolName: chunk.tool_name,
-					args: (chunk.args as Record<string, unknown>) || {},
+					toolCallId: signal.tool_call_id,
+					toolName: signal.tool_name,
+					args: (signal.args as Record<string, unknown>) || {},
 				});
-			}
-			if (chunk.type === 'text') {
-				this._scrollToBottom();
 			}
 		}));
 	}
 
-	private _currentAssistantComp: AssistantMessage | null = null;
-	private _renderedMessageCount = 0;
-	private _messageComponents: Map<number, UserMessage | AssistantMessage> = new Map();
-
-	private _renderMessages(messages: readonly IChatMessage[]): void {
+	private _onNotificationAdded(): void {
 		if (!this._messagesEl) { return; }
 
-		const hasMessages = messages.length > 0;
-		this._welcomeEl.style.display = hasMessages ? 'none' : 'flex';
+		const notifications = this.chatService.notifications;
+		const hasNotifications = notifications.length > 0;
+		this._welcomeEl.style.display = hasNotifications ? 'none' : 'flex';
 
-		// Messages were cleared — reset everything
-		if (messages.length < this._renderedMessageCount) {
-			for (const comp of this._messageComponents.values()) {
-				comp.dispose();
-			}
-			DOM.clearNode(this._messagesEl);
-			this._messageComponents.clear();
-			this._renderedMessageCount = 0;
-			this._currentAssistantComp = null;
-			this._messagesEl.appendChild(this._welcomeEl);
+		// Notifications were cleared — reset everything
+		if (notifications.length === 0) {
+			this._resetView();
+			return;
 		}
 
-		if (!hasMessages) { return; }
+		// Get the latest notification
+		const notification = notifications[notifications.length - 1];
+		const update = notification.data.update;
+		const sessionUpdate = update.sessionUpdate as string;
 
-		// Only the last message changed (streaming content update) — re-render just that one
-		const isContentUpdate = messages.length === this._renderedMessageCount && messages.length > 0;
-		if (isContentUpdate) {
-			const lastIdx = messages.length - 1;
-			const lastMsg = messages[lastIdx];
-			if (lastMsg.role === 'assistant') {
-				const comp = this._messageComponents.get(lastIdx);
-				if (comp instanceof AssistantMessage) {
-					// Turn ended with tool calls — one recreate to render them properly
-					if (!this.chatService.isStreaming && lastMsg.toolCalls && lastMsg.toolCalls.length > 0) {
-						comp.dispose();
-						comp.element.remove();
-						const duration = this._turnStartTime > 0 ? Date.now() - this._turnStartTime : 0;
-						const newComp = new AssistantMessage(lastMsg, duration, (filePath) => {
-							this._openFile(filePath);
-						}, false);
-						newComp.appendTo(this._messagesEl);
-						this._viewDisposables.add(newComp);
-						this._viewDisposables.add(newComp.onCopy(text => {
-							navigator.clipboard.writeText(text).catch(() => { /* ignore */ });
-						}));
-						this._messageComponents.set(lastIdx, newComp);
-						this._currentAssistantComp = newComp;
-					} else {
-						// Streaming or turn ended without tool calls — update body in place
-						comp.updateContent(lastMsg, this.chatService.isStreaming);
-						if (!this.chatService.isStreaming) {
-							comp.stopThinking();
-						}
-						this._currentAssistantComp = comp;
-					}
-				}
-			}
+		// Determine group type
+		const groupType = (sessionUpdate === 'tool_call' || sessionUpdate === 'tool_call_update')
+			? 'tool'
+			: sessionUpdate;
+
+		// Same type as last group? Extend it
+		if (groupType === this._lastGroupType && this._lastGroupComp) {
+			this._lastGroupComp.appendNotification(notification);
 		} else {
-			// Only append new messages
-			for (let i = this._renderedMessageCount; i < messages.length; i++) {
-				const msg = messages[i];
-				if (msg.role === 'user') {
-					const comp = new UserMessage(msg);
-					comp.appendTo(this._messagesEl);
-					this._viewDisposables.add(comp);
-					this._messageComponents.set(i, comp);
-				} else if (msg.role === 'assistant') {
-					const duration = this._turnStartTime > 0 ? Date.now() - this._turnStartTime : 0;
-					const isThinking = this.chatService.isThinking && msg === messages[messages.length - 1];
-					const comp = new AssistantMessage(msg, duration, (filePath) => {
-						this._openFile(filePath);
-					}, isThinking);
-					comp.appendTo(this._messagesEl);
-					this._viewDisposables.add(comp);
-					this._viewDisposables.add(comp.onCopy(text => {
-						navigator.clipboard.writeText(text).catch(() => { /* ignore */ });
-					}));
-					this._messageComponents.set(i, comp);
-					if (msg === messages[messages.length - 1]) {
-						this._currentAssistantComp = comp;
-					}
-				}
+			// Different type — create new group component
+			if (this._lastGroupComp) {
+				this._lastGroupComp.stopStreaming();
 			}
+
+			const comp = this._createGroupComponent(notification, groupType);
+			comp.appendTo(this._messagesEl);
+			this._viewDisposables.add(comp);
+			this._groupComponents.push({ type: groupType, component: comp });
+			this._lastGroupComp = comp;
+			this._lastGroupType = groupType;
 		}
 
-		this._renderedMessageCount = messages.length;
 		this._scrollToBottom();
+	}
+
+	private _createGroupComponent(
+		notification: AcpNotification,
+		groupType: string
+	): UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup {
+		let comp: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup;
+
+		switch (groupType) {
+			case 'user_message_chunk':
+				comp = new UserMessage();
+				break;
+			case 'agent_thought_chunk':
+				comp = new ThinkingBlock();
+				break;
+			case 'agent_message_chunk':
+				comp = new AgentMessageGroup();
+				break;
+			case 'tool':
+				comp = new ToolCallGroup();
+				break;
+			default:
+				// Fallback to agent message for unknown types
+				comp = new AgentMessageGroup();
+				break;
+		}
+
+		comp.appendNotification(notification);
+		return comp;
+	}
+
+	private _resetView(): void {
+		// Dispose all group components
+		for (const gc of this._groupComponents) {
+			gc.component.dispose();
+		}
+		this._groupComponents = [];
+		this._lastGroupType = null;
+		this._lastGroupComp = null;
+
+		// Clear messages container
+		DOM.clearNode(this._messagesEl);
+		this._messagesEl.appendChild(this._welcomeEl);
 	}
 
 	private _scrollToBottom(): void {
@@ -272,24 +265,24 @@ export class SidexChatViewPane extends ViewPane {
 	}
 
 	private _exportChat(): void {
-		const msgs = this.chatService.messages;
-		const text = msgs.map(m => `[${m.role}]\n${m.content}\n`).join('\n---\n\n');
+		const notifications = this.chatService.notifications;
+		const text = notifications.map(n => {
+			const update = n.data.update;
+			const sessionUpdate = update.sessionUpdate as string;
+			const content = update.content as { text?: string } | undefined;
+			const text = content?.text || '';
+			return `[${sessionUpdate}]\n${text}\n`;
+		}).join('\n---\n\n');
 		navigator.clipboard.writeText(text).catch(() => { /* */ });
 	}
 
-	private _openFile(filePath: string): void {
-		const uri = URI.file(filePath);
-		this.editorService.openEditor({ resource: uri }).then(undefined, () => { /* ignore */ });
-	}
-
-	private _showPermissionDialog(data: PermissionRequestData): void {
+	private _showPermissionDialog(data: {
+		toolCallId: string;
+		toolName: string;
+		args?: Record<string, unknown>;
+	}): void {
 		if (!this._messagesEl) { return; }
-		const dialog = new PermissionRequestDialog(data);
-		dialog.appendTo(this._messagesEl);
-		this._viewDisposables.add(dialog);
-		this._viewDisposables.add(dialog.onRespond(result => {
-			this.chatService.respondToPermission(result.toolCallId, result.approved);
-		}));
-		this._scrollToBottom();
+		// For now, just log permission requests — full implementation later
+		console.log('[sidexChatView] Permission request:', data);
 	}
 }

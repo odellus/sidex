@@ -1,13 +1,19 @@
 /*---------------------------------------------------------------------------------------------
- *  ACP Chat Store — reactive state for the native ACP chat.
+ *  ACP Chat Store — notification log for the native ACP chat.
  *  Talks to the Rust `sidex-acp` backend via Tauri invoke/listen.
  *  Ported from crow-ui's acp-store with Sidex's DI & event patterns.
+ *
+ *  The store is a dumb append-only log. Every session/update event from the
+ *  backend gets pushed to the notifications array as-is, preserving arrival order.
+ *  The view groups consecutive same-type notifications and renders each group
+ *  as its own visual block, maintaining chronological ordering.
  *--------------------------------------------------------------------------------------------*/
 
 import type { ContentBlock } from '@agentclientprotocol/sdk';
 import { invoke } from '../../../../sidex-bridge.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { listen } from '@tauri-apps/api/event';
+import type { AcpNotification } from './acp-utils.js';
 
 // ─── Tauri event listener ─────────────────────────────────────────────────
 
@@ -37,21 +43,6 @@ export interface PromptTurnState {
 	message?: string;
 }
 
-export interface ToolCallInfo {
-	id: string;
-	name: string;
-	input: string;
-	output: string;
-	status: string;
-}
-
-export interface ChatMessage {
-	role: 'user' | 'assistant';
-	content: string;
-	thinkingContent?: string;
-	toolCalls?: ToolCallInfo[];
-}
-
 export interface QueuedItem {
 	id: string;
 	text: string;
@@ -66,19 +57,12 @@ export interface SessionInfo {
 	cwd: string;
 }
 
-// ─── Internal notification tracking ────────────────────────────────────────
-
-interface RawNotification {
+export interface ControlSignal {
 	type: string;
-	content?: { text?: string };
-	text?: string;
-	title?: string;
-	status?: string;
-	toolCallId?: string;
-	name?: string;
-	input?: unknown;
-	output?: unknown;
-	locations?: unknown[];
+	content?: string;
+	tool_call_id?: string;
+	tool_name?: string;
+	args?: unknown;
 }
 
 // ─── Store ─────────────────────────────────────────────────────────────────
@@ -90,21 +74,12 @@ export class AcpStore {
 
 	private _connectionStatus: ConnectionStatus = 'disconnected';
 	private _promptTurnState: PromptTurnState = { status: 'idle' };
-	private _messages: ChatMessage[] = [];
+	private _notifications: AcpNotification[] = [];
 	private _isStreaming: boolean = false;
 	private _queuedItems: QueuedItem[] = [];
-	private _rawNotifications: RawNotification[] = [];
 
-	// Tool calls being accumulated for the current assistant message
-	private _pendingToolCalls: Map<string, ToolCallInfo> = new Map();
-	// Thinking content being accumulated
-	private _pendingThinking: string = '';
-
-	private readonly _onDidChange = this._registerEmitter<void>();
-	readonly onDidChange: Event<void> = this._onDidChange.event;
-
-	private readonly _onDidReceiveChunk = this._registerEmitter<{ type: string; content?: string; tool_call_id?: string; tool_name?: string; args?: unknown }>();
-	readonly onDidReceiveChunk: Event<{ type: string; content?: string; tool_call_id?: string; tool_name?: string; args?: unknown }> = this._onDidReceiveChunk.event;
+	private readonly _onDidChangeNotifications = this._registerEmitter<void>();
+	readonly onDidChangeNotifications: Event<void> = this._onDidChangeNotifications.event;
 
 	private readonly _onDidChangeStreaming = this._registerEmitter<boolean>();
 	readonly onDidChangeStreaming: Event<boolean> = this._onDidChangeStreaming.event;
@@ -112,12 +87,14 @@ export class AcpStore {
 	private readonly _onDidChangeConnectionState = this._registerEmitter<void>();
 	readonly onDidChangeConnectionState: Event<void> = this._onDidChangeConnectionState.event;
 
+	private readonly _onDidReceiveControlSignal = this._registerEmitter<ControlSignal>();
+	readonly onDidReceiveControlSignal: Event<ControlSignal> = this._onDidReceiveControlSignal.event;
+
 	private _unlisteners: (() => void)[] = [];
 	private _eventListenerStarted = false;
 
 	private _registerEmitter<T>(): Emitter<T> {
 		const e = new Emitter<T>();
-		// Store the dispose function so we can clean up later
 		return e;
 	}
 
@@ -125,9 +102,8 @@ export class AcpStore {
 
 	get connectionStatus(): ConnectionStatus { return this._connectionStatus; }
 	get promptTurnState(): PromptTurnState { return this._promptTurnState; }
-	get messages(): readonly ChatMessage[] { return this._messages; }
+	get notifications(): readonly AcpNotification[] { return this._notifications; }
 	get isStreaming(): boolean { return this._isStreaming; }
-	get isThinking(): boolean { return this._isStreaming && this._pendingThinking.length > 0; }
 	get sessionId(): string { return this._sessionId; }
 	get connectionId(): string { return this._connectionId; }
 	get cwd(): string { return this._cwd; }
@@ -206,9 +182,9 @@ export class AcpStore {
 		this._sessionId = '';
 		this._connectionId = '';
 		this._connectionStatus = 'disconnected';
-		this._messages = [];
+		this._notifications = [];
 		this._onDidChangeConnectionState.fire();
-		this._onDidChange.fire();
+		this._onDidChangeNotifications.fire();
 	}
 
 	// ─── Prompt ────────────────────────────────────────────────────────────
@@ -218,9 +194,19 @@ export class AcpStore {
 
 		this._setStreaming(true);
 
-		// Add user message immediately for instant feedback
-		this._messages = [...this._messages, { role: 'user', content: text }];
-		this._onDidChange.fire();
+		// Add user message notification immediately for instant feedback
+		const userNotification: AcpNotification = {
+			id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+			type: 'session_notification',
+			data: {
+				update: {
+					sessionUpdate: 'user_message_chunk',
+					content: { text },
+				},
+			},
+		};
+		this._notifications = [...this._notifications, userNotification];
+		this._onDidChangeNotifications.fire();
 
 		const blocks: ContentBlock[] = [{ type: 'text' as const, text }];
 
@@ -239,7 +225,6 @@ export class AcpStore {
 		// Safety: if prompt_complete event was missed, clean up
 		if (this._isStreaming) {
 			this._setStreaming(false);
-			this._finalizeAssistantMessage();
 		}
 	}
 
@@ -289,6 +274,8 @@ export class AcpStore {
 		const sessionUpdate = update.sessionUpdate as string | undefined;
 		const content = update.content as Record<string, unknown> | undefined;
 
+		// ── Control signals (NOT appended to notification log) ──
+
 		// Backend-owned prompt lifecycle
 		if (sessionUpdate === 'prompt_state') {
 			const status = update.status as string;
@@ -312,98 +299,27 @@ export class AcpStore {
 				this._promptTurnState = { status: 'complete', stopReason };
 			}
 			this._setStreaming(false);
-			this._finalizeAssistantMessage();
 			return;
 		}
 
 		if (sessionUpdate === 'queue_changed') {
 			this._queuedItems = (update.items as QueuedItem[]) || [];
-			this._onDidChange.fire();
 			return;
 		}
 
-		// User message chunk
-		if (sessionUpdate === 'user_message_chunk') {
-			const text = content?.text as string || '';
-			this._onDidReceiveChunk.fire({ type: 'text', content: text });
-			return;
-		}
-
-		// Assistant content streaming (ACP sends "agent_message_chunk")
-		if (sessionUpdate === 'agent_message_chunk') {
-			const text = content?.text as string || '';
-			this._ensureLastAssistantMessage();
-			this._messages[this._messages.length - 1].content += text;
-			this._onDidReceiveChunk.fire({ type: 'text', content: text });
-			this._onDidChange.fire();
-			return;
-		}
-
-		// Thinking / reasoning (ACP sends "agent_thought_chunk")
-		if (sessionUpdate === 'agent_thought_chunk') {
-			const text = content?.text as string || '';
-			this._pendingThinking += text;
-			this._ensureLastAssistantMessage();
-			this._messages[this._messages.length - 1].thinkingContent = this._pendingThinking;
-			this._onDidReceiveChunk.fire({ type: 'thinking', content: text });
-			this._onDidChange.fire();
-			return;
-		}
-
-		// Tool calls (ACP sends "tool_call" with camelCase fields)
-		if (sessionUpdate === 'tool_call') {
-			const toolCallId = update.toolCallId as string || '';
-			const name = update.title as string || '';
-			const input = update.rawInput as unknown;
-			this._pendingToolCalls.set(toolCallId, {
-				id: toolCallId,
-				name,
-				input: typeof input === 'string' ? input : JSON.stringify(input),
-				output: '',
-				status: 'running',
-			});
-			this._onDidReceiveChunk.fire({
-				type: 'tool_call',
-				tool_call_id: toolCallId,
-				tool_name: name,
-				args: input,
-			});
-			return;
-		}
-
-		// Tool call updates (ACP sends "tool_call_update"; ToolCallUpdate struct is NOT camelCase,
-		// so tool_call_id is snake_case, but flattened ToolCallUpdateFields IS camelCase)
-		if (sessionUpdate === 'tool_call_update') {
-			const toolCallId = (update.tool_call_id ?? update.toolCallId) as string || '';
-			const status = update.status as string;
-			const output = update.rawOutput as unknown;
-			const existing = this._pendingToolCalls.get(toolCallId);
-			if (existing) {
-				if (status) { existing.status = status; }
-				if (output !== undefined) {
-					if (typeof output === 'string') {
-						existing.output += output;
-					} else {
-						existing.output = JSON.stringify(output);
-					}
-				}
-			}
-			return;
-		}
-
-		// Brief/title updates
+		// Brief updates (control signal)
 		if (sessionUpdate === 'brief') {
 			const text = content?.text as string || '';
-			this._onDidReceiveChunk.fire({ type: 'brief', content: text });
+			this._onDidReceiveControlSignal.fire({ type: 'brief', content: text });
 			return;
 		}
 
-		// Permission requests
+		// Permission requests (control signal)
 		if (sessionUpdate === 'permission_request') {
 			const toolCallId = update.toolCallId as string;
 			const toolName = update.toolName as string;
 			const args = update.args;
-			this._onDidReceiveChunk.fire({
+			this._onDidReceiveControlSignal.fire({
 				type: 'permission_request',
 				tool_call_id: toolCallId,
 				tool_name: toolName,
@@ -411,59 +327,28 @@ export class AcpStore {
 			});
 			return;
 		}
+
+		// ── Content events (appended to notification log) ──
+
+		const notificationId = `evt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+		const notification: AcpNotification = {
+			id: notificationId,
+			type: 'session_notification',
+			data: { update },
+		};
+		this._notifications = [...this._notifications, notification];
+		this._onDidChangeNotifications.fire();
 	}
 
 	private _setStreaming(streaming: boolean): void {
 		if (this._isStreaming !== streaming) {
 			this._isStreaming = streaming;
-			if (!streaming) {
-				this._pendingThinking = '';
-			}
 			this._onDidChangeStreaming.fire(streaming);
-			this._onDidChange.fire();
 		}
-	}
-
-	private _ensureLastAssistantMessage(): void {
-		if (this._messages.length === 0 || this._messages[this._messages.length - 1].role !== 'assistant') {
-			this._messages = [...this._messages, { role: 'assistant', content: '' }];
-		}
-	}
-
-	private _finalizeAssistantMessage(): void {
-		const toolCalls: ToolCallInfo[] = [];
-		for (const tc of this._pendingToolCalls.values()) {
-			toolCalls.push({ ...tc });
-		}
-
-		const thinkingContent = this._pendingThinking || undefined;
-		const lastMsg = this._messages[this._messages.length - 1];
-
-		if (lastMsg && lastMsg.role === 'assistant') {
-			// Update the existing streaming placeholder
-			lastMsg.thinkingContent = thinkingContent;
-			if (toolCalls.length > 0) {
-				lastMsg.toolCalls = toolCalls;
-			}
-		} else {
-			const msg: ChatMessage = {
-				role: 'assistant',
-				content: '',
-				thinkingContent,
-				toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-			};
-			this._messages = [...this._messages, msg];
-		}
-
-		this._pendingToolCalls.clear();
-		this._pendingThinking = '';
-		this._onDidChange.fire();
 	}
 
 	clearMessages(): void {
-		this._messages = [];
-		this._pendingToolCalls.clear();
-		this._pendingThinking = '';
-		this._onDidChange.fire();
+		this._notifications = [];
+		this._onDidChangeNotifications.fire();
 	}
 }

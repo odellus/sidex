@@ -7,24 +7,8 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { AcpStore, ChatMessage, ToolCallInfo, PromptTurnState, ConnectionStatus } from './acpStore.js';
-
-// ─── Public types (used by UI components) ─────────────────────────────────
-
-export interface IChatMessage {
-	role: 'user' | 'assistant';
-	content: string;
-	thinkingContent?: string;
-	toolCalls?: IToolCallInfo[];
-}
-
-export interface IToolCallInfo {
-	id: string;
-	name: string;
-	input: string;
-	output: string;
-	status: string;
-}
+import { AcpStore, ConnectionStatus, PromptTurnState, ControlSignal } from './acpStore.js';
+import type { AcpNotification } from './acp-utils.js';
 
 // ─── Service interface ─────────────────────────────────────────────────────
 
@@ -36,20 +20,19 @@ export interface ISidexChatService {
 	// Connection state
 	readonly connectionState: ConnectionStatus;
 
-	// Messages
-	readonly messages: readonly ChatMessage[];
+	// Notifications
+	readonly notifications: readonly AcpNotification[];
 	readonly isStreaming: boolean;
-	readonly isThinking: boolean;
 
 	// Model info
 	readonly serverModel: string;
 
 	// Events
-	readonly onDidChangeMessages: Event<readonly ChatMessage[]>;
+	readonly onDidChangeNotifications: Event<void>;
 	readonly onDidChangeStreaming: Event<boolean>;
 	readonly onDidChangeConnectionState: Event<void>;
 	readonly onDidChangeModels: Event<Array<{ id: string; name: string }>>;
-	readonly onDidReceiveChunk: Event<{ type: string; content?: string; tool_call_id?: string; tool_name?: string; args?: unknown }>;
+	readonly onDidReceiveControlSignal: Event<ControlSignal>;
 
 	// Actions
 	connect(): Promise<void>;
@@ -71,8 +54,8 @@ class SidexChatServiceImpl implements ISidexChatService {
 	private _store = new AcpStore();
 	private _model: string = '';
 
-	private readonly _onDidChangeMessages = new Emitter<readonly ChatMessage[]>();
-	readonly onDidChangeMessages = this._onDidChangeMessages.event;
+	private readonly _onDidChangeNotifications = new Emitter<void>();
+	readonly onDidChangeNotifications = this._onDidChangeNotifications.event;
 
 	private readonly _onDidChangeStreaming = new Emitter<boolean>();
 	readonly onDidChangeStreaming = this._onDidChangeStreaming.event;
@@ -83,21 +66,20 @@ class SidexChatServiceImpl implements ISidexChatService {
 	private readonly _onDidChangeModels = new Emitter<Array<{ id: string; name: string }>>();
 	readonly onDidChangeModels = this._onDidChangeModels.event;
 
-	private readonly _onDidReceiveChunk = new Emitter<{ type: string; content?: string; tool_call_id?: string; tool_name?: string; args?: unknown }>();
-	readonly onDidReceiveChunk = this._onDidReceiveChunk.event;
+	private readonly _onDidReceiveControlSignal = new Emitter<ControlSignal>();
+	readonly onDidReceiveControlSignal = this._onDidReceiveControlSignal.event;
 
 	get connectionState(): ConnectionStatus { return this._store.connectionStatus; }
-	get messages(): readonly ChatMessage[] { return this._store.messages; }
+	get notifications(): readonly AcpNotification[] { return this._store.notifications; }
 	get isStreaming(): boolean { return this._store.isStreaming; }
-	get isThinking(): boolean { return this._store.isThinking; }
 	get serverModel(): string { return this._model; }
 
 	constructor(
 		@IWorkspaceContextService private readonly _workspaceContext: IWorkspaceContextService,
 	) {
 		// Forward store events
-		this._store.onDidChange(() => {
-			this._onDidChangeMessages.fire(this._store.messages);
+		this._store.onDidChangeNotifications(() => {
+			this._onDidChangeNotifications.fire();
 		});
 		this._store.onDidChangeStreaming(s => {
 			this._onDidChangeStreaming.fire(s);
@@ -105,8 +87,8 @@ class SidexChatServiceImpl implements ISidexChatService {
 		this._store.onDidChangeConnectionState(() => {
 			this._onDidChangeConnectionState.fire();
 		});
-		this._store.onDidReceiveChunk(chunk => {
-			this._onDidReceiveChunk.fire(chunk);
+		this._store.onDidReceiveControlSignal(signal => {
+			this._onDidReceiveControlSignal.fire(signal);
 		});
 	}
 

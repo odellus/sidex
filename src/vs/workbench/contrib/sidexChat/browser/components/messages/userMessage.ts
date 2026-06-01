@@ -1,10 +1,24 @@
 import { Component } from '../base.js';
-import { IChatMessage } from '../../sidexChatService.js';
+import type { AcpNotification } from '../../acp-utils.js';
 
 export class UserMessage extends Component {
-	constructor(msg: IChatMessage) {
+	private _text = '';
+	private _contentEl: HTMLElement;
+
+	constructor() {
 		super('div', 'sc-user-msg');
-		const contentEl = this.append('div', 'sc-user-msg-content');
-		contentEl.textContent = msg.content;
+		this._contentEl = this.append('div', 'sc-user-msg-content');
+	}
+
+	appendNotification(notification: AcpNotification): void {
+		const update = notification.data.update;
+		const content = update.content as { text?: string } | undefined;
+		const text = content?.text || '';
+		this._text += text;
+		this._contentEl.textContent = this._text;
+	}
+
+	stopStreaming(): void {
+		// No-op
 	}
 }

@@ -274,8 +274,14 @@
 	word-wrap: break-word;
 }
 
-/* ===== Assistant Message ===== */
-.sc-assistant-msg {
+/* ===== Agent Message ===== */
+.sc-agent-msg {
+	margin-bottom: 12px;
+	animation: sc-fade-in 0.15s ease-out;
+}
+
+/* ===== Tool Call Block ===== */
+.sc-tool-block {
 	margin-bottom: 12px;
 	animation: sc-fade-in 0.15s ease-out;
 }
@@ -379,65 +385,40 @@
 	color: var(--vscode-foreground);
 }
 
-/* ===== Collapsible Sections ===== */
-.sc-collapsible {
+/* ===== Sections (always visible) ===== */
+.sc-section {
 	border: 1px solid var(--vscode-widget-border);
 	border-radius: 6px;
 	margin: 8px 0;
 	overflow: hidden;
 }
 
-.sc-collapsible-header {
+.sc-section-header {
 	display: flex;
 	align-items: center;
 	padding: 6px 12px;
-	cursor: pointer;
 	user-select: none;
 	font-size: 12px;
-	color: var(--vscode-foreground);
+	color: var(--vscode-descriptionForeground);
 	background: transparent;
-	transition: background 0.1s ease;
 }
 
-.sc-collapsible-left {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-}
-
-.sc-collapsible-header:hover {
-	background: var(--vscode-list-hoverBackground);
-}
-
-.sc-collapsible-chevron {
-	font-size: 16px;
-	line-height: 1;
-	opacity: 0.6;
-	transition: transform 0.15s ease;
-	display: inline-flex;
-	align-items: center;
-}
-
-.sc-collapsible.expanded .sc-collapsible-chevron {
-	transform: rotate(90deg);
-}
-
-.sc-collapsible-label {
+.sc-section-label {
+	font-size: 12px;
 	line-height: 16px;
 }
 
-.sc-collapsible-label {
-	font-size: 12px;
-	color: var(--vscode-foreground);
-}
-
-.sc-collapsible-body {
-	display: none;
+.sc-section-body {
 	border-top: 1px solid var(--vscode-widget-border);
 }
 
-.sc-collapsible.expanded .sc-collapsible-body {
-	display: block;
+/* ===== Tool Container (inline tool calls) ===== */
+.sc-tool-container {
+	margin: 4px 0;
+}
+
+.sc-tool-duration {
+	margin-top: 8px;
 }
 
 /* ===== Tool Calls ===== */
@@ -1101,22 +1082,16 @@
 	align-items: center;
 	justify-content: space-between;
 	padding: 6px 12px;
-	cursor: pointer;
 	user-select: none;
 	font-size: 12px;
 	color: var(--vscode-descriptionForeground);
 	background: transparent;
-	transition: background 0.1s ease;
-}
-
-.sc-thinking-header:hover {
-	background: var(--vscode-list-hoverBackground);
 }
 
 .sc-thinking-header-left {
 	display: flex;
 	align-items: center;
-	gap: 4px;
+	gap: 6px;
 }
 
 .sc-thinking-label {
@@ -1129,11 +1104,17 @@
 	width: 6px;
 	height: 6px;
 	border-radius: 50%;
-	background: var(--vscode-descriptionForeground);
+	background: var(--vscode-charts-yellow, #cca700);
+	animation: sc-thinking-pulse 1.5s ease-in-out infinite;
 }
 
 .sc-thinking-block.streaming .sc-thinking-indicator {
 	display: inline-block;
+}
+
+@keyframes sc-thinking-pulse {
+	0%, 100% { opacity: 0.4; }
+	50% { opacity: 1; }
 }
 
 .sc-thinking-elapsed {
@@ -1143,7 +1124,6 @@
 }
 
 .sc-thinking-content {
-	display: none;
 	max-height: 300px;
 	overflow-y: auto;
 	padding: 8px 12px;
@@ -1155,14 +1135,6 @@
 	background: rgba(0, 0, 0, 0.04);
 	white-space: pre-wrap;
 	word-wrap: break-word;
-}
-
-.sc-thinking-block.expanded .sc-thinking-content {
-	display: block;
-}
-
-.sc-thinking-block.expanded .sc-collapsible-chevron {
-	transform: rotate(90deg);
 }
 
 .sc-thinking-content::-webkit-scrollbar {
