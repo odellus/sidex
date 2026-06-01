@@ -17,6 +17,7 @@ import { IEditorOpenContext } from '../../../common/editor.js';
 import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { AcpStore } from './acpStore.js';
+import { ScrollManager } from './scrollManager.js';
 import { ChatHeader } from './components/toolbar/chatHeader.js';
 import { ChatInput } from './components/input/chatInput.js';
 import { UserMessage } from './components/messages/userMessage.js';
@@ -48,6 +49,9 @@ export class SidexChatEditor extends EditorPane {
 	private _header!: ChatHeader;
 	private _messagesEl!: HTMLElement;
 	private _welcomeEl!: HTMLElement;
+	private _sentinelEl!: HTMLElement;
+	private _jumpBtnEl!: HTMLElement;
+	private _scrollManager!: ScrollManager;
 	private _chatInput!: ChatInput;
 
 	// Group-based rendering state
@@ -112,6 +116,17 @@ export class SidexChatEditor extends EditorPane {
 		this._welcomeEl = dom.append(this._messagesEl, $('div.sc-welcome'));
 		dom.append(this._welcomeEl, $('div.sc-welcome-title')).textContent = 'crow-cli';
 		dom.append(this._welcomeEl, $('div.sc-welcome-subtitle')).textContent = 'Ask anything';
+
+		// Scroll sentinel + jump button (same pattern as SidexChatViewPane)
+		this._sentinelEl = dom.append(this._messagesEl, $('div.sc-scroll-sentinel'));
+		this._jumpBtnEl = dom.append(this._messagesEl, $('button.sc-jump-btn'));
+		this._jumpBtnEl.textContent = 'New messages ↓';
+		this._jumpBtnEl.addEventListener('click', () => this._scrollManager.forceScrollToBottom());
+
+		this._scrollManager = new ScrollManager(this._messagesEl, this._sentinelEl);
+		this._sessionDisposables.add(this._scrollManager);
+		this._sessionDisposables.add(this._scrollManager.onUserScrollUp(() => this._jumpBtnEl.classList.add('visible')));
+		this._sessionDisposables.add(this._scrollManager.onUserScrollDown(() => this._jumpBtnEl.classList.remove('visible')));
 
 		this._chatInput = new ChatInput();
 		this._chatInput.appendTo(this._rootEl);
@@ -222,14 +237,17 @@ export class SidexChatEditor extends EditorPane {
 			}
 
 			const comp = this._createGroupComponent(notification);
-			comp.appendTo(this._messagesEl);
+			const wrapper = document.createElement('div');
+			wrapper.classList.add('sc-message-group');
+			this._messagesEl.insertBefore(wrapper, this._sentinelEl);
+			comp.appendTo(wrapper);
 			this._sessionDisposables.add(comp);
 			this._groupComponents.push({ type: groupType, component: comp });
 			this._lastGroupComp = comp;
 			this._lastGroupType = groupType;
 		}
 
-		this._scrollToBottom();
+		this._scrollManager.scrollToBottom();
 	}
 
 	private _createGroupComponent(
@@ -272,12 +290,10 @@ export class SidexChatEditor extends EditorPane {
 		if (this._messagesEl) {
 			dom.clearNode(this._messagesEl);
 			this._messagesEl.appendChild(this._welcomeEl);
-		}
-	}
-
-	private _scrollToBottom(): void {
-		if (this._messagesEl) {
-			this._messagesEl.scrollTop = this._messagesEl.scrollHeight;
+			this._messagesEl.appendChild(this._sentinelEl);
+			this._messagesEl.appendChild(this._jumpBtnEl);
+			this._scrollManager?.reset();
+			this._jumpBtnEl?.classList.remove('visible');
 		}
 	}
 

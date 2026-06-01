@@ -217,7 +217,9 @@
 	flex: 1;
 	overflow-y: auto;
 	overflow-x: hidden;
+	min-height: 0; /* critical for flex child to actually overflow and enable scroll */
 	padding: 16px;
+	position: relative;
 }
 
 .sc-messages::-webkit-scrollbar {
@@ -1067,6 +1069,52 @@
 @keyframes sc-fade-in {
 	from { opacity: 0; transform: translateY(4px); }
 	to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== Scroll Anchor System ===== */
+/* Message group wrappers opt out of scroll anchoring so the browser
+   doesn't pin the viewport to them as they grow during streaming. */
+.sc-message-group {
+	overflow-anchor: none;
+}
+
+/* Bottom sentinel — the only scroll-anchor candidate. The browser
+   keeps this element in view as content above it expands, giving us
+   free CSS-based auto-scroll during streaming. */
+.sc-scroll-sentinel {
+	overflow-anchor: auto;
+	height: 1px;
+	flex-shrink: 0;
+}
+
+/* ===== Jump-to-Bottom Button ===== */
+.sc-jump-btn {
+	display: none;
+	position: absolute;
+	bottom: 8px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 10;
+	padding: 4px 14px;
+	border-radius: 14px;
+	font-size: 11px;
+	font-family: var(--vscode-font-family);
+	color: var(--vscode-button-foreground);
+	background: var(--vscode-button-background);
+	border: 1px solid var(--vscode-widget-border, transparent);
+	cursor: pointer;
+	box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.2));
+	transition: background 0.1s ease;
+	white-space: nowrap;
+}
+
+.sc-jump-btn:hover {
+	background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+}
+
+.sc-jump-btn.visible {
+	display: block;
+	animation: sc-fade-in 0.15s ease-out;
 }
 
 /* ===== Thinking Block ===== */

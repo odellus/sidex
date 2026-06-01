@@ -16,6 +16,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ISidexChatService } from './sidexChatService.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { ScrollManager } from './scrollManager.js';
 import { ChatHeader } from './components/toolbar/chatHeader.js';
 import { ChatInput } from './components/input/chatInput.js';
 import { UserMessage } from './components/messages/userMessage.js';
@@ -35,6 +36,9 @@ export class SidexChatViewPane extends ViewPane {
 	private _header!: ChatHeader;
 	private _messagesEl!: HTMLElement;
 	private _welcomeEl!: HTMLElement;
+	private _sentinelEl!: HTMLElement;
+	private _jumpBtnEl!: HTMLElement;
+	private _scrollManager!: ScrollManager;
 	private _input!: ChatInput;
 	private readonly _viewDisposables = this._register(new DisposableStore());
 
@@ -71,6 +75,22 @@ export class SidexChatViewPane extends ViewPane {
 		this._welcomeEl = DOM.append(this._messagesEl, $('div.sc-welcome'));
 		DOM.append(this._welcomeEl, $('div.sc-welcome-title')).textContent = 'crow-cli';
 		DOM.append(this._welcomeEl, $('div.sc-welcome-subtitle')).textContent = 'Ask anything';
+
+		// Scroll sentinel — always the last child of .sc-messages.
+		// overflow-anchor: auto on this element lets the browser keep it in view
+		// as content above it grows (free CSS auto-scroll during streaming).
+		this._sentinelEl = DOM.append(this._messagesEl, $('div.sc-scroll-sentinel'));
+
+		// Jump-to-bottom button — positioned inside .sc.messages so it's relative to the scroll container
+		this._jumpBtnEl = DOM.append(this._messagesEl, $('button.sc-jump-btn'));
+		this._jumpBtnEl.textContent = 'New messages ↓';
+		this._jumpBtnEl.addEventListener('click', () => this._scrollManager.forceScrollToBottom());
+
+		// Scroll manager — handles user-scroll detection and conditional auto-scroll
+		this._scrollManager = new ScrollManager(this._messagesEl, this._sentinelEl);
+		this._viewDisposables.add(this._scrollManager);
+		this._viewDisposables.add(this._scrollManager.onUserScrollUp(() => this._jumpBtnEl.classList.add('visible')));
+		this._viewDisposables.add(this._scrollManager.onUserScrollDown(() => this._jumpBtnEl.classList.remove('visible')));
 
 		this._input = new ChatInput();
 		this._input.appendTo(parent);
@@ -188,14 +208,18 @@ export class SidexChatViewPane extends ViewPane {
 			}
 
 			const comp = this._createGroupComponent(notification, groupType);
-			comp.appendTo(this._messagesEl);
+			// Wrap in .sc-message-group (overflow-anchor: none) and insert before the sentinel
+			const wrapper = document.createElement('div');
+			wrapper.classList.add('sc-message-group');
+			this._messagesEl.insertBefore(wrapper, this._sentinelEl);
+			comp.appendTo(wrapper);
 			this._viewDisposables.add(comp);
 			this._groupComponents.push({ type: groupType, component: comp });
 			this._lastGroupComp = comp;
 			this._lastGroupType = groupType;
 		}
 
-		this._scrollToBottom();
+		this._scrollManager.scrollToBottom();
 	}
 
 	private _createGroupComponent(
@@ -236,15 +260,13 @@ export class SidexChatViewPane extends ViewPane {
 		this._lastGroupType = null;
 		this._lastGroupComp = null;
 
-		// Clear messages container
+		// Clear messages container and re-add welcome + sentinel
 		DOM.clearNode(this._messagesEl);
 		this._messagesEl.appendChild(this._welcomeEl);
-	}
-
-	private _scrollToBottom(): void {
-		if (this._messagesEl) {
-			this._messagesEl.scrollTop = this._messagesEl.scrollHeight;
-		}
+		this._messagesEl.appendChild(this._sentinelEl);
+		this._messagesEl.appendChild(this._jumpBtnEl);
+		this._scrollManager.reset();
+		this._jumpBtnEl.classList.remove('visible');
 	}
 
 	protected override layoutBody(height: number, width: number): void {
