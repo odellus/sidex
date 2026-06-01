@@ -22,7 +22,14 @@ import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
+import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
+import { EditorExtensions, IEditorFactoryRegistry } from '../../../common/editor.js';
+import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { SidexChatViewPane } from './sidexChatView.js';
+import { SidexChatEditor } from './sidexChatEditor.js';
+import { SidexChatEditorInput, sidexChatEditorId } from './sidexChatEditorInput.js';
+import { SidexChatEditorInputSerializer } from './sidexChatEditorSerializer.js';
+import { SidexChatUri } from './sidexChatUri.js';
 import './sidexChatService.js';
 
 export const SIDEX_CHAT_CONTAINER_ID = 'workbench.view.sidexChat';
@@ -57,6 +64,34 @@ Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews(
 	],
 	viewContainer
 );
+
+// ── Editor registration (chat as a tab in the editor area) ──
+
+Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(
+	SidexChatEditorInput.ID,
+	SidexChatEditorInputSerializer,
+);
+Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
+	EditorPaneDescriptor.create(SidexChatEditor, sidexChatEditorId, nls.localize('sidexChat', 'Sidex Chat')),
+	[new SyncDescriptor(SidexChatEditorInput)],
+);
+
+// Command: open chat in editor area
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'workbench.action.openSidexChatEditor',
+			title: nls.localize2('openSidexChatEditor', 'Open Sidex Chat in Editor'),
+			f1: true,
+		});
+	}
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const editorService = accessor.get(IEditorService);
+		const uri = SidexChatUri.getNewEditorUri();
+		const input = new SidexChatEditorInput(uri);
+		await editorService.openEditor(input, { pinned: true });
+	}
+});
 
 // Cmd+Shift+I toggles the Sidex panel
 registerAction2(class extends Action2 {
