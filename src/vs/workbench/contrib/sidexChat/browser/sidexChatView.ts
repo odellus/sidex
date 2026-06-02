@@ -37,7 +37,6 @@ export class SidexChatViewPane extends ViewPane {
 	private _messagesEl!: HTMLElement;
 	private _welcomeEl!: HTMLElement;
 	private _sentinelEl!: HTMLElement;
-	private _jumpBtnEl!: HTMLElement;
 	private _scrollManager!: ScrollManager;
 	private _input!: ChatInput;
 	private readonly _viewDisposables = this._register(new DisposableStore());
@@ -81,16 +80,9 @@ export class SidexChatViewPane extends ViewPane {
 		// as content above it grows (free CSS auto-scroll during streaming).
 		this._sentinelEl = DOM.append(this._messagesEl, $('div.sc-scroll-sentinel'));
 
-		// Jump-to-bottom button — positioned inside .sc.messages so it's relative to the scroll container
-		this._jumpBtnEl = DOM.append(this._messagesEl, $('button.sc-jump-btn'));
-		this._jumpBtnEl.textContent = 'New messages ↓';
-		this._jumpBtnEl.addEventListener('click', () => this._scrollManager.forceScrollToBottom());
-
 		// Scroll manager — handles user-scroll detection and conditional auto-scroll
 		this._scrollManager = new ScrollManager(this._messagesEl, this._sentinelEl);
 		this._viewDisposables.add(this._scrollManager);
-		this._viewDisposables.add(this._scrollManager.onUserScrollUp(() => this._jumpBtnEl.classList.add('visible')));
-		this._viewDisposables.add(this._scrollManager.onUserScrollDown(() => this._jumpBtnEl.classList.remove('visible')));
 
 		this._input = new ChatInput();
 		this._input.appendTo(parent);
@@ -264,9 +256,7 @@ export class SidexChatViewPane extends ViewPane {
 		DOM.clearNode(this._messagesEl);
 		this._messagesEl.appendChild(this._welcomeEl);
 		this._messagesEl.appendChild(this._sentinelEl);
-		this._messagesEl.appendChild(this._jumpBtnEl);
 		this._scrollManager.reset();
-		this._jumpBtnEl.classList.remove('visible');
 	}
 
 	protected override layoutBody(height: number, width: number): void {

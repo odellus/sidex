@@ -50,7 +50,6 @@ export class SidexChatEditor extends EditorPane {
 	private _messagesEl!: HTMLElement;
 	private _welcomeEl!: HTMLElement;
 	private _sentinelEl!: HTMLElement;
-	private _jumpBtnEl!: HTMLElement;
 	private _scrollManager!: ScrollManager;
 	private _chatInput!: ChatInput;
 
@@ -117,16 +116,11 @@ export class SidexChatEditor extends EditorPane {
 		dom.append(this._welcomeEl, $('div.sc-welcome-title')).textContent = 'crow-cli';
 		dom.append(this._welcomeEl, $('div.sc-welcome-subtitle')).textContent = 'Ask anything';
 
-		// Scroll sentinel + jump button (same pattern as SidexChatViewPane)
+		// Scroll sentinel
 		this._sentinelEl = dom.append(this._messagesEl, $('div.sc-scroll-sentinel'));
-		this._jumpBtnEl = dom.append(this._messagesEl, $('button.sc-jump-btn'));
-		this._jumpBtnEl.textContent = 'New messages ↓';
-		this._jumpBtnEl.addEventListener('click', () => this._scrollManager.forceScrollToBottom());
 
 		this._scrollManager = new ScrollManager(this._messagesEl, this._sentinelEl);
 		this._sessionDisposables.add(this._scrollManager);
-		this._sessionDisposables.add(this._scrollManager.onUserScrollUp(() => this._jumpBtnEl.classList.add('visible')));
-		this._sessionDisposables.add(this._scrollManager.onUserScrollDown(() => this._jumpBtnEl.classList.remove('visible')));
 
 		this._chatInput = new ChatInput();
 		this._chatInput.appendTo(this._rootEl);
@@ -291,9 +285,7 @@ export class SidexChatEditor extends EditorPane {
 			dom.clearNode(this._messagesEl);
 			this._messagesEl.appendChild(this._welcomeEl);
 			this._messagesEl.appendChild(this._sentinelEl);
-			this._messagesEl.appendChild(this._jumpBtnEl);
 			this._scrollManager?.reset();
-			this._jumpBtnEl?.classList.remove('visible');
 		}
 	}
 
