@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as nls from '../../../../nls.js';
+import { URI } from '../../../../base/common/uri.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
@@ -30,6 +31,7 @@ import { SidexChatEditor } from './sidexChatEditor.js';
 import { SidexChatEditorInput, sidexChatEditorId } from './sidexChatEditorInput.js';
 import { SidexChatEditorInputSerializer } from './sidexChatEditorSerializer.js';
 import { SidexChatUri } from './sidexChatUri.js';
+import { SidexChatSessionManager } from './sidexChatSessionManager.js';
 import './sidexChatService.js';
 
 export const SIDEX_CHAT_CONTAINER_ID = 'workbench.view.sidexChat';
@@ -87,7 +89,21 @@ registerAction2(class extends Action2 {
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const editorService = accessor.get(IEditorService);
-		const uri = SidexChatUri.getNewEditorUri();
+
+		// Check if there's already an open Sidex Chat editor we should reuse
+		const existingEditors = editorService.editors.filter(
+			e => e instanceof SidexChatEditorInput
+		) as SidexChatEditorInput[];
+
+		let uri: URI;
+		if (existingEditors.length > 0) {
+			// Reuse the most recent session
+			uri = existingEditors[existingEditors.length - 1].resource;
+		} else {
+			// Create a new session
+			uri = SidexChatUri.getNewEditorUri();
+		}
+
 		const input = new SidexChatEditorInput(uri);
 		await editorService.openEditor(input, { pinned: true });
 	}

@@ -1,7 +1,10 @@
 /*---------------------------------------------------------------------------------------------
  *  SidexChatEditor — EditorPane that renders a chat session as an editor tab.
- *  Each tab gets its own AcpStore, providing independent sessions.
- *  Reuses the same DOM components as SidexChatViewPane.
+ *  Uses SidexChatSessionManager to persist sessions across tab switches.
+ *
+ *  Lifecycle: createEditor() → setInput() → [tab switch] → setInput() again
+ *  The key insight: VSCode reuses the same EditorPane instance on tab switch.
+ *  The DOM stays in place; we just need to keep the store alive.
  *--------------------------------------------------------------------------------------------*/
 
 import * as dom from '../../../../base/browser/dom.js';
@@ -18,6 +21,7 @@ import { IEditorGroup } from '../../../services/editor/common/editorGroupsServic
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { AcpStore } from './acpStore.js';
 import { ScrollManager } from './scrollManager.js';
+import { SidexChatSessionManager } from './sidexChatSessionManager.js';
 import { ChatHeader } from './components/toolbar/chatHeader.js';
 import { ChatInput } from './components/input/chatInput.js';
 import { UserMessage } from './components/messages/userMessage.js';
@@ -37,11 +41,16 @@ interface GroupComponent {
 }
 
 export class SidexChatEditor extends EditorPane {
-
 	static readonly ID = sidexChatEditorId;
 
+	private _sessionManager = SidexChatSessionManager.getInstance();
 	private _editorInput?: SidexChatEditorInput;
 	private _acpStore?: AcpStore;
+	// Disposables for the UI components (header, input, scroll manager) —
+	// these live for the lifetime of the editor pane, not per-session.
+	private readonly _uiDisposables = this._register(new DisposableStore());
+	// Disposables for event listeners tied to the current store/session.
+	// Cleared on tab switch so we don't leak listeners or hold stale references.
 	private readonly _sessionDisposables = this._register(new DisposableStore());
 
 	// DOM elements
@@ -64,56 +73,60 @@ export class SidexChatEditor extends EditorPane {
 		@IThemeService themeService: IThemeService,
 		@IStorageService storageService: IStorageService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
-		@IWorkspaceContextService private readonly _workspaceContext: IWorkspaceContextService,
+		@IWorkspaceContextService private readonly _workspaceContext: IWorkspaceContextService
 	) {
 		super(SidexChatEditor.ID, group, telemetryService, themeService, storageService);
 	}
 
 	protected createEditor(parent: HTMLElement): void {
 		this._rootEl = dom.append(parent, $('div.sidex-chat-view'));
-		
-		// Debug: log parent chain to understand the layout context
-		console.log('[SidexChatEditor] createEditor - parent:', parent.tagName, parent.className);
-		console.log('[SidexChatEditor] createEditor - rootEl computed style:', getComputedStyle(this._rootEl).height);
 	}
 
 	override async setInput(
 		input: SidexChatEditorInput,
 		options: IEditorOptions | undefined,
 		context: IEditorOpenContext,
-		token: CancellationToken,
+		token: CancellationToken
 	): Promise<void> {
 		this._editorInput = input;
 		await super.setInput(input, options, context, token);
 
-		// Clear previous session
-		this._sessionDisposables.clear();
-		this._resetView();
+		const sessionId = input.sessionId;
+		if (!sessionId) {
+			throw new Error('SidexChatEditorInput must have a sessionId');
+		}
 
-		// Create new store for this tab
-		this._acpStore = new AcpStore();
+		// Get or create the persistent store for this session
+		this._acpStore = this._sessionManager.getOrCreateSession(sessionId);
+
+		// Build UI and bind events (idempotent — safe to call multiple times)
 		this._buildUI();
 		this._bindEvents();
 
-		// Connect to agent
-		this._connect();
+		// Connect to agent if not already connected
+		if (this._acpStore.connectionStatus === 'disconnected') {
+			await this._connect();
+		}
 	}
 
 	override clearInput(): void {
 		super.clearInput();
 		this._sessionDisposables.clear();
-		this._acpStore?.dispose();
 		this._acpStore = undefined;
 		this._editorInput = undefined;
 	}
 
 	private _buildUI(): void {
-		// Clear root
+		// Only build once — if messages element exists, skip
+		if (this._messagesEl) {
+			return;
+		}
+
 		dom.clearNode(this._rootEl);
 
 		this._header = new ChatHeader();
 		this._header.appendTo(this._rootEl);
-		this._sessionDisposables.add(this._header);
+		this._uiDisposables.add(this._header);
 
 		this._messagesEl = dom.append(this._rootEl, $('div.sc-messages'));
 		this._welcomeEl = dom.append(this._messagesEl, $('div.sc-welcome'));
@@ -124,61 +137,86 @@ export class SidexChatEditor extends EditorPane {
 		this._sentinelEl = dom.append(this._messagesEl, $('div.sc-scroll-sentinel'));
 
 		this._scrollManager = new ScrollManager(this._messagesEl, this._sentinelEl);
-		this._sessionDisposables.add(this._scrollManager);
+		this._uiDisposables.add(this._scrollManager);
 
 		this._chatInput = new ChatInput();
 		this._chatInput.appendTo(this._rootEl);
-		this._sessionDisposables.add(this._chatInput);
+		this._uiDisposables.add(this._chatInput);
 	}
 
 	private _bindEvents(): void {
 		const store = this._acpStore;
-		if (!store) { return; }
+		if (!store) {
+			return;
+		}
 
-		this._sessionDisposables.add(this._chatInput.onSend(text => {
-			store.sendMessage(text);
-		}));
+		// Clear any existing store event listeners to avoid duplicates
+		this._sessionDisposables.clear();
+
+		this._sessionDisposables.add(
+			this._chatInput.onSend(text => {
+				store.sendMessage(text);
+			})
+		);
 		this._sessionDisposables.add(this._chatInput.onStop(() => store.stopStreaming()));
-		this._sessionDisposables.add(this._chatInput.onModeChange(_mode => { /* no-op */ }));
+		this._sessionDisposables.add(
+			this._chatInput.onModeChange(_mode => {
+				/* no-op */
+			})
+		);
 
 		this._sessionDisposables.add(this._header.onNewChat(() => store.clearMessages()));
-		this._sessionDisposables.add(this._header.onHistory(() => {
-			this._fetchSessions();
-		}));
-		this._sessionDisposables.add(this._header.onSelectSession(sessionId => {
-			store.loadSession(sessionId);
-		}));
-		this._sessionDisposables.add(this._header.onMenuAction(action => {
-			if (action === 'clear_all') {
-				store.clearMessages();
-			} else if (action === 'export') {
-				this._exportChat();
-			}
-		}));
+		this._sessionDisposables.add(
+			this._header.onHistory(() => {
+				this._fetchSessions();
+			})
+		);
+		this._sessionDisposables.add(
+			this._header.onSelectSession(sessionId => {
+				store.loadSession(sessionId);
+			})
+		);
+		this._sessionDisposables.add(
+			this._header.onMenuAction(action => {
+				if (action === 'clear_all') {
+					store.clearMessages();
+				} else if (action === 'export') {
+					this._exportChat();
+				}
+			})
+		);
 
 		this._sessionDisposables.add(store.onDidChangeNotifications(() => this._onNotificationAdded()));
-		this._sessionDisposables.add(store.onDidChangeStreaming(s => {
-			this._chatInput.setStreaming(s);
-			if (!s && this._lastGroupComp) {
-				this._lastGroupComp.stopStreaming();
-			}
-		}));
-		this._sessionDisposables.add(store.onDidChangeConnectionState(() => {
-			if (store.connectionStatus === 'connected' || store.connectionStatus === 'ready') {
-				this._fetchSessions();
-			}
-		}));
-		this._sessionDisposables.add(store.onDidReceiveControlSignal(signal => {
-			if (signal.type === 'brief' && signal.content) {
-				const text = signal.content.startsWith('BRIEF:') ? signal.content.slice(6) : signal.content;
-				this._header.showBrief(text);
-			}
-		}));
+		this._sessionDisposables.add(
+			store.onDidChangeStreaming(s => {
+				this._chatInput.setStreaming(s);
+				if (!s && this._lastGroupComp) {
+					this._lastGroupComp.stopStreaming();
+				}
+			})
+		);
+		this._sessionDisposables.add(
+			store.onDidChangeConnectionState(() => {
+				if (store.connectionStatus === 'connected' || store.connectionStatus === 'ready') {
+					this._fetchSessions();
+				}
+			})
+		);
+		this._sessionDisposables.add(
+			store.onDidReceiveControlSignal(signal => {
+				if (signal.type === 'brief' && signal.content) {
+					const text = signal.content.startsWith('BRIEF:') ? signal.content.slice(6) : signal.content;
+					this._header.showBrief(text);
+				}
+			})
+		);
 	}
 
 	private async _connect(): Promise<void> {
 		const store = this._acpStore;
-		if (!store) { return; }
+		if (!store) {
+			return;
+		}
 
 		const workspace = this._workspaceContext.getWorkspace();
 		const cwd = workspace.folders[0]?.uri?.fsPath || '/home';
@@ -191,7 +229,7 @@ export class SidexChatEditor extends EditorPane {
 					command: 'crow-cli',
 					args: ['acp'],
 					env: [],
-					cwd,
+					cwd
 				});
 				return;
 			} catch (e) {
@@ -209,7 +247,9 @@ export class SidexChatEditor extends EditorPane {
 
 	private _onNotificationAdded(): void {
 		const store = this._acpStore;
-		if (!store || !this._messagesEl) { return; }
+		if (!store || !this._messagesEl) {
+			return;
+		}
 
 		const notifications = store.notifications;
 		this._welcomeEl.style.display = notifications.length > 0 ? 'none' : 'flex';
@@ -223,9 +263,7 @@ export class SidexChatEditor extends EditorPane {
 		const update = notification.data.update;
 		const sessionUpdate = update.sessionUpdate as string;
 
-		const groupType = (sessionUpdate === 'tool_call' || sessionUpdate === 'tool_call_update')
-			? 'tool'
-			: sessionUpdate;
+		const groupType = sessionUpdate === 'tool_call' || sessionUpdate === 'tool_call_update' ? 'tool' : sessionUpdate;
 
 		if (groupType === this._lastGroupType && this._lastGroupComp) {
 			this._lastGroupComp.appendNotification(notification);
@@ -249,7 +287,7 @@ export class SidexChatEditor extends EditorPane {
 	}
 
 	private _createGroupComponent(
-		notification: AcpNotification,
+		notification: AcpNotification
 	): UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup {
 		const sessionUpdate = notification.data.update.sessionUpdate as string;
 		let comp: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup;
@@ -295,35 +333,40 @@ export class SidexChatEditor extends EditorPane {
 
 	private _fetchSessions(): void {
 		const store = this._acpStore;
-		if (!store) { return; }
+		if (!store) {
+			return;
+		}
 		const cwd = this._workspaceContext.getWorkspace().folders[0]?.uri?.fsPath || '/home';
 		store.listSessions(cwd).then(sessions => {
-			this._header.setSessions(sessions.map(s => ({
-				id: s.id,
-				title: s.title,
-				updated_at: new Date(s.date).toISOString(),
-			})));
+			this._header.setSessions(
+				sessions.map(s => ({
+					id: s.id,
+					title: s.title,
+					updated_at: new Date(s.date).toISOString()
+				}))
+			);
 		});
 	}
 
 	private _exportChat(): void {
 		const store = this._acpStore;
-		if (!store) { return; }
-		const text = store.notifications.map(n => {
-			const update = n.data.update;
-			const sessionUpdate = update.sessionUpdate as string;
-			const content = update.content as { text?: string } | undefined;
-			return `[${sessionUpdate}]\n${content?.text || ''}\n`;
-		}).join('\n---\n\n');
-		navigator.clipboard.writeText(text).catch(() => { /* */ });
+		if (!store) {
+			return;
+		}
+		const text = store.notifications
+			.map(n => {
+				const update = n.data.update;
+				const sessionUpdate = update.sessionUpdate as string;
+				const content = update.content as { text?: string } | undefined;
+				return `[${sessionUpdate}]\n${content?.text || ''}\n`;
+			})
+			.join('\n---\n\n');
+		navigator.clipboard.writeText(text).catch(() => {
+			/* */
+		});
 	}
 
 	override layout(dimension: dom.Dimension): void {
-		// The EditorPane framework calls layout() with the available dimensions.
-		// We must apply them to our root element so the flex layout inside
-		// has a definite height to work with. Without this, the root collapses
-		// to content height and the messages area never gets enough space
-		// for overflow-y: auto scrolling to engage.
 		if (this._rootEl) {
 			dom.size(this._rootEl, dimension.width, dimension.height);
 		}
