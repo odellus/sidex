@@ -3,8 +3,11 @@
  *  Uses SidexChatSessionManager to persist sessions across tab switches.
  *
  *  Lifecycle: createEditor() → setInput() → [tab switch] → setInput() again
- *  The key insight: VSCode reuses the same EditorPane instance on tab switch.
- *  The DOM stays in place; we just need to keep the store alive.
+ *
+ *  Key insight: VSCode reuses ONE EditorPane instance for all tabs of the same
+ *  type. On tab switch it calls setInput() with the new input on the same pane.
+ *  This means the DOM is shared — we must swap per-session DOM elements in/out
+ *  of the live container so each tab shows its own conversation.
  *--------------------------------------------------------------------------------------------*/
 
 import * as dom from '../../../../base/browser/dom.js';
@@ -19,6 +22,7 @@ import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../common/editor.js';
 import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { AcpStore } from './acpStore.js';
 import { ScrollManager } from './scrollManager.js';
 import { SidexChatSessionManager } from './sidexChatSessionManager.js';
@@ -40,20 +44,36 @@ interface GroupComponent {
 	component: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup;
 }
 
+/** Per-session view state — DOM elements and rendering state that are swapped on tab switch. */
+interface SessionView {
+	messagesEl: HTMLElement;
+	welcomeEl: HTMLElement;
+	sentinelEl: HTMLElement;
+	scrollManager: ScrollManager;
+	chatInput: ChatInput;
+	groupComponents: GroupComponent[];
+	lastGroupType: string | null;
+	lastGroupComp: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup | null;
+}
+
 export class SidexChatEditor extends EditorPane {
 	static readonly ID = sidexChatEditorId;
 
 	private _sessionManager = SidexChatSessionManager.getInstance();
 	private _editorInput?: SidexChatEditorInput;
 	private _acpStore?: AcpStore;
-	// Disposables for the UI components (header, input, scroll manager) —
-	// these live for the lifetime of the editor pane, not per-session.
+	private _currentSessionId?: string;
+
+	// Disposables for the UI components that live for the pane lifetime.
 	private readonly _uiDisposables = this._register(new DisposableStore());
 	// Disposables for event listeners tied to the current store/session.
 	// Cleared on tab switch so we don't leak listeners or hold stale references.
 	private readonly _sessionDisposables = this._register(new DisposableStore());
 
-	// DOM elements
+	// Per-session view storage — keyed by session ID
+	private _sessionViews = new Map<string, SessionView>();
+
+	// Live DOM elements (currently visible)
 	private _rootEl!: HTMLElement;
 	private _header!: ChatHeader;
 	private _messagesEl!: HTMLElement;
@@ -62,7 +82,7 @@ export class SidexChatEditor extends EditorPane {
 	private _scrollManager!: ScrollManager;
 	private _chatInput!: ChatInput;
 
-	// Group-based rendering state
+	// Live rendering state (for the currently visible session)
 	private _groupComponents: GroupComponent[] = [];
 	private _lastGroupType: string | null = null;
 	private _lastGroupComp: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup | null = null;
@@ -73,13 +93,19 @@ export class SidexChatEditor extends EditorPane {
 		@IThemeService themeService: IThemeService,
 		@IStorageService storageService: IStorageService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
-		@IWorkspaceContextService private readonly _workspaceContext: IWorkspaceContextService
+		@IWorkspaceContextService private readonly _workspaceContext: IWorkspaceContextService,
+		@ICommandService private readonly _commandService: ICommandService
 	) {
 		super(SidexChatEditor.ID, group, telemetryService, themeService, storageService);
 	}
 
 	protected createEditor(parent: HTMLElement): void {
 		this._rootEl = dom.append(parent, $('div.sidex-chat-view'));
+
+		// Header is shared across sessions (stateless toolbar)
+		this._header = new ChatHeader();
+		this._header.appendTo(this._rootEl);
+		this._uiDisposables.add(this._header);
 	}
 
 	override async setInput(
@@ -96,11 +122,23 @@ export class SidexChatEditor extends EditorPane {
 			throw new Error('SidexChatEditorInput must have a sessionId');
 		}
 
+		// Save the current session's view state before switching
+		if (this._currentSessionId && this._messagesEl) {
+			this._saveCurrentView();
+		}
+
 		// Get or create the persistent store for this session
 		this._acpStore = this._sessionManager.getOrCreateSession(sessionId);
+		this._currentSessionId = sessionId;
 
-		// Build UI and bind events (idempotent — safe to call multiple times)
-		this._buildUI();
+		// Restore or create this session's view
+		const savedView = this._sessionViews.get(sessionId);
+		if (savedView) {
+			this._restoreView(savedView);
+		} else {
+			this._createSessionView();
+		}
+
 		this._bindEvents();
 
 		// Connect to agent if not already connected
@@ -116,32 +154,59 @@ export class SidexChatEditor extends EditorPane {
 		this._editorInput = undefined;
 	}
 
-	private _buildUI(): void {
-		// Only build once — if messages element exists, skip
-		if (this._messagesEl) {
+	/** Save current DOM elements and rendering state into the session views map. */
+	private _saveCurrentView(): void {
+		if (!this._currentSessionId) {
 			return;
 		}
 
-		dom.clearNode(this._rootEl);
+		// Detach elements from the live container (they stay alive in memory)
+		this._messagesEl.remove();
+		this._chatInput.element.remove();
 
-		this._header = new ChatHeader();
-		this._header.appendTo(this._rootEl);
-		this._uiDisposables.add(this._header);
+		this._sessionViews.set(this._currentSessionId, {
+			messagesEl: this._messagesEl,
+			welcomeEl: this._welcomeEl,
+			sentinelEl: this._sentinelEl,
+			scrollManager: this._scrollManager,
+			chatInput: this._chatInput,
+			groupComponents: this._groupComponents,
+			lastGroupType: this._lastGroupType,
+			lastGroupComp: this._lastGroupComp
+		});
+	}
 
+	/** Restore a previously saved session view into the live container. */
+	private _restoreView(view: SessionView): void {
+		this._messagesEl = view.messagesEl;
+		this._welcomeEl = view.welcomeEl;
+		this._sentinelEl = view.sentinelEl;
+		this._scrollManager = view.scrollManager;
+		this._chatInput = view.chatInput;
+		this._groupComponents = view.groupComponents;
+		this._lastGroupType = view.lastGroupType;
+		this._lastGroupComp = view.lastGroupComp;
+
+		// Re-attach to the live container
+		this._rootEl.appendChild(this._messagesEl);
+		this._chatInput.appendTo(this._rootEl);
+	}
+
+	/** Build a fresh session view (messages + input) and attach to the live container. */
+	private _createSessionView(): void {
 		this._messagesEl = dom.append(this._rootEl, $('div.sc-messages'));
 		this._welcomeEl = dom.append(this._messagesEl, $('div.sc-welcome'));
 		dom.append(this._welcomeEl, $('div.sc-welcome-title')).textContent = 'crow-cli';
 		dom.append(this._welcomeEl, $('div.sc-welcome-subtitle')).textContent = 'Ask anything';
-
-		// Scroll sentinel
 		this._sentinelEl = dom.append(this._messagesEl, $('div.sc-scroll-sentinel'));
-
 		this._scrollManager = new ScrollManager(this._messagesEl, this._sentinelEl);
-		this._uiDisposables.add(this._scrollManager);
 
 		this._chatInput = new ChatInput();
 		this._chatInput.appendTo(this._rootEl);
-		this._uiDisposables.add(this._chatInput);
+
+		this._groupComponents = [];
+		this._lastGroupType = null;
+		this._lastGroupComp = null;
 	}
 
 	private _bindEvents(): void {
@@ -150,7 +215,6 @@ export class SidexChatEditor extends EditorPane {
 			return;
 		}
 
-		// Clear any existing store event listeners to avoid duplicates
 		this._sessionDisposables.clear();
 
 		this._sessionDisposables.add(
@@ -182,6 +246,8 @@ export class SidexChatEditor extends EditorPane {
 					store.clearMessages();
 				} else if (action === 'export') {
 					this._exportChat();
+				} else if (action === 'open_in_editor') {
+					this._commandService.executeCommand('workbench.action.openSidexChatEditor');
 				}
 			})
 		);
@@ -243,7 +309,7 @@ export class SidexChatEditor extends EditorPane {
 		}
 	}
 
-	// ── Rendering (same logic as SidexChatViewPane) ──
+	// ── Rendering ──
 
 	private _onNotificationAdded(): void {
 		const store = this._acpStore;

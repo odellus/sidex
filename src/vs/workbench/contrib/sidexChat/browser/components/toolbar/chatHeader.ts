@@ -69,6 +69,7 @@ export class ChatHeader extends Component {
 		this._menuPanel = this.append('div', 'sc-menu-panel');
 		const menuItems: Array<{ id: string; label: string; codicon: ThemeIcon }> = [
 			{ id: 'new_chat', label: 'New Chat', codicon: Codicon.add },
+			{ id: 'open_in_editor', label: 'Open in Editor', codicon: Codicon.linkExternal },
 			{ id: 'export', label: 'Export Chat', codicon: Codicon.export },
 			{ id: 'separator', label: '', codicon: Codicon.dash },
 			{ id: 'clear_all', label: 'Clear All Chats', codicon: Codicon.trashcan },

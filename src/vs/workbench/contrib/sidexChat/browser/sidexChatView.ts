@@ -16,6 +16,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { ISidexChatService } from './sidexChatService.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ScrollManager } from './scrollManager.js';
 import { ChatHeader } from './components/toolbar/chatHeader.js';
 import { ChatInput } from './components/input/chatInput.js';
@@ -58,6 +59,7 @@ export class SidexChatViewPane extends ViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@ISidexChatService private readonly chatService: ISidexChatService,
+		@ICommandService private readonly _commandService: ICommandService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -114,6 +116,8 @@ export class SidexChatViewPane extends ViewPane {
 				this._exportChat();
 			} else if (action === 'clear_all') {
 				this.chatService.clearMessages();
+			} else if (action === 'open_in_editor') {
+				this._openInEditor();
 			}
 		}));
 
@@ -274,6 +278,10 @@ export class SidexChatViewPane extends ViewPane {
 			title: s.title,
 			updated_at: new Date(s.date).toISOString(),
 		})));
+	}
+
+	private _openInEditor(): void {
+		this._commandService.executeCommand('workbench.action.openSidexChatEditor');
 	}
 
 	private _exportChat(): void {

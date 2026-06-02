@@ -45,9 +45,9 @@ export class SidexChatEditorInput extends EditorInput implements IEditorCloseHan
 	override getName(): string {
 		const id = this.sessionId;
 		if (id) {
-			// Show a short, readable identifier
-			const short = id.length > 12 ? id.slice(0, 12) : id;
-			return `Sidex Chat — ${short}`;
+			// Use the random suffix (after the timestamp) for a short, unique name
+			const suffix = id.split('-').pop();
+			return `Sidex Chat — #${suffix}`;
 		}
 		return 'Sidex Chat';
 	}
