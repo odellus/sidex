@@ -71,6 +71,10 @@ export class SidexChatEditor extends EditorPane {
 
 	protected createEditor(parent: HTMLElement): void {
 		this._rootEl = dom.append(parent, $('div.sidex-chat-view'));
+		
+		// Debug: log parent chain to understand the layout context
+		console.log('[SidexChatEditor] createEditor - parent:', parent.tagName, parent.className);
+		console.log('[SidexChatEditor] createEditor - rootEl computed style:', getComputedStyle(this._rootEl).height);
 	}
 
 	override async setInput(
@@ -111,7 +115,7 @@ export class SidexChatEditor extends EditorPane {
 		this._header.appendTo(this._rootEl);
 		this._sessionDisposables.add(this._header);
 
-		this._messagesEl = dom.append(this._rootEl, $('div.sc.messages'));
+		this._messagesEl = dom.append(this._rootEl, $('div.sc-messages'));
 		this._welcomeEl = dom.append(this._messagesEl, $('div.sc-welcome'));
 		dom.append(this._welcomeEl, $('div.sc-welcome-title')).textContent = 'crow-cli';
 		dom.append(this._welcomeEl, $('div.sc-welcome-subtitle')).textContent = 'Ask anything';
@@ -315,10 +319,13 @@ export class SidexChatEditor extends EditorPane {
 	}
 
 	override layout(dimension: dom.Dimension): void {
-		// The CSS handles layout; just ensure the root fills the space
+		// The EditorPane framework calls layout() with the available dimensions.
+		// We must apply them to our root element so the flex layout inside
+		// has a definite height to work with. Without this, the root collapses
+		// to content height and the messages area never gets enough space
+		// for overflow-y: auto scrolling to engage.
 		if (this._rootEl) {
-			this._rootEl.style.height = `${dimension.height}px`;
-			this._rootEl.style.width = `${dimension.width}px`;
+			dom.size(this._rootEl, dimension.width, dimension.height);
 		}
 	}
 

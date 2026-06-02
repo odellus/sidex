@@ -32,9 +32,10 @@ export class ScrollManager extends Disposable {
 		this._register(DOM.addDisposableListener(this._messagesEl, 'scroll', () => this._handleScroll()));
 
 		// VSCode's DomScrollableElement in the parent chain intercepts wheel events
-		// with { passive: false } and calls preventDefault(), which kills native
-		// overflow-y: auto scrolling on .sc.messages. We stop propagation when the
-		// messages container can actually scroll, preventing the parent from eating it.
+		// with { passive: false } in CAPTURE phase and calls preventDefault(), which
+		// kills native overflow-y: auto scrolling on .sc-messages. We must intercept
+		// in capture phase (before parent handlers), manually scroll, and preventDefault()
+		// to stop the event from reaching those parent handlers.
 		this._register(DOM.addDisposableListener(this._messagesEl, 'wheel', (e: WheelEvent) => {
 			const el = this._messagesEl;
 			const hasScrollableContent = el.scrollHeight > el.clientHeight;
@@ -45,12 +46,18 @@ export class ScrollManager extends Disposable {
 			const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
 			const scrollingUp = e.deltaY < 0;
 			const scrollingDown = e.deltaY > 0;
-			// Only stop propagation when scrolling would actually scroll this container.
+			// Only handle when scrolling would actually scroll this container.
 			// If user is at top scrolling up, or at bottom scrolling down, let parent handle it.
 			if ((scrollingUp && !atTop) || (scrollingDown && !atBottom)) {
+				// Manually scroll since parent handlers would preventDefault() native scroll
+				const newScrollTop = el.scrollTop + e.deltaY;
+				el.scrollTop = Math.max(0, Math.min(newScrollTop, el.scrollHeight - el.clientHeight));
+				
+				// Prevent the event from reaching parent handlers
+				e.preventDefault();
 				e.stopPropagation();
 			}
-		}));
+		}, true)); // true = use capture phase to run before parent handlers
 	}
 
 	get isUserScrolledUp(): boolean {
