@@ -3,120 +3,72 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-      /* Alignment */
-      mtable.right-align mtd,
-      mtable mtd.right-align,
-      mtable.left-align mtd.right-align,
-      mtable.aligned mtd:nth-child(odd) {
-        justify-items: end;
-        text-align: right;
-      }
-      mtable.cases mtd,
-      mtable.left-align mtd,
-      mtable mtd.left-align,
-      mtable.aligned mtd:nth-child(even),
-      math:is(:not([display])) > mtable.multiline-equation mtd {
-        justify-items: start;
-        text-align: left;
-      }
-      mtable.cases mtd,
-      mtable.aligned mtd,
-      mtable mtd.flushed,
-      mtable mtd.left-flush {
-        padding-left: 0;
-      }
-      mtable.cases mtd,
-      mtable.aligned mtd,
-      mtable mtd.flushed,
-      mtable mtd.right-flush {
-        padding-right: 0;
-      }
-      
-      /* Tables */
-      mtable {
-        math-style: inherit;
-      }
-      mtd {
-        math-depth: auto-add;
-        math-style: compact;
-        math-shift: compact;
-      }
-      
-      /* Equations */
-      mtable.multiline-equation mtd {
-        math-depth: inherit;
-        math-style: inherit;
-        math-shift: inherit;
-        padding: 0;
-      }
-      math > mtable.multiline-equation mtr:not(:last-child) mtd {
-        padding-bottom: 0.5em;
-      }
-      
-      /* Fractions */
-      mfrac {
-        padding-inline: 0;
-        margin-inline: 0.1em;
-      }
-      
-      /* Accents */
-      mover[accent="true" i] > :first-child {
-        font-feature-settings: "dtls";
-      }
-      mover.dotted[accent="true" i] > :first-child {
-        font-feature-settings: "dtls" 0;
-      }
-      
-      /* Other rules for scriptlevel, displaystyle and math-shift */
-      munder > :nth-child(2),
-      munderover > :nth-child(2) {
-        math-shift: compact
-      }
-      munder[accentunder="true" i] > :not(:first-child),
-      mover[accent="true" i] > :not(:first-child) {
-        math-depth: inherit;
-        math-style: inherit;
-        math-shift: inherit;
-      }
-    </style>
   </head>
   <body>
     <h2>TO DO</h2>
-    <h3>Chat specific</h3>
+    <h3>ACP Chat specific</h3>
     <ol>
-      <li>Get rid of echo of user message and improper formatting of user response</li>
-      <li>Proper syntax highlighting for typst (WYSIWYG?) and good @ context mechanism in the rich text editor. Enable scroll wheel. Resizing. Change the default color of the text to same white as text in chat.</li>
-      <li>Pull thinking tokens out of the weird scrollable box they’re in and enable syntax highlighting for their thoughts</li>
-      <li>Add diff fixtures for edit and write</li>
-      <li>Add terminal fixture that is a “real terminal” in other words xterm.js</li>
-      <li>Make all text in chat brighter. it’s a dark theme. can barely see text right now. too muted.</li>
-      <li>Model selection in chat</li>
+      <li>
+        <p>Get rid of echo of user message and improper formatting of user response</p>
+      </li>
+      <li>
+        <p>Proper syntax highlighting for typst (WYSIWYG?) and good @ context mechanism in the rich text editor. Enable scroll wheel. Resizing. Change the default color of the text to same white as text in chat.</p>
+      </li>
+      <li>
+        <p>Pull thinking tokens out of the weird scrollable box they’re in and enable syntax highlighting for their thoughts</p>
+      </li>
+      <li>
+        <p>Add diff fixtures for edit and write</p>
+      </li>
+      <li>
+        <p>Add terminal fixture that is a “real terminal” in other words xterm.js</p>
+      </li>
+      <li>
+        <p>Make all text in chat brighter. it’s a dark theme. can barely see text right now. too muted.</p>
+      </li>
+      <li>
+        <p>Model selection in chat</p>
+      </li>
+      <li>
+        <p>TOOLS! Client side tools that do orchestration stuff. Cool orchestration tasks like</p>
+        <ul>
+          <li>list_sessions — list all the active sessions open in editor</li>
+          <li>send — send a message to another user. hooked up to state to say who it called so called agent replies back after react loop to execute task with a tool-less, RESTful summary</li>
+          <li>task_read — read from the task list</li>
+          <li>task_write — create, update, delete items from a todo task list that is tied into how the agents work, all of this will be described in great detail elsewhere but basically we have three tiers of agents and the middle agent is in charge of assigning and evaluating tasks and the task_write tool puts it in a loop where it has to move tasks to done or it gets a reply telling it to do the task or move to done until it does</li>
+        </ul>
+      </li>
+      <li>
+        <p>Fixtures for the above client side tools and they will need to be integrated into crow-cli</p>
+      </li>
+      <li>
+        <p>ACP agent configuration and debugging view — configure different settings for agent</p>
+      </li>
+      <li>
+        <p>MCP server configuration and debugging view</p>
+      </li>
+      <li>
+        <p>Prompt editor configuration/plugin/extension for ACP — not an extension, part of contrib</p>
+      </li>
+      <li>
+        <p>Make “everything” configurable in settings json of IDE</p>
+      </li>
+      <li>
+        <p>A viewer/editor for the different queues we use</p>
+        <ul>
+          <li>An editor/view for the normal queue of a standard agent</li>
+          <li>An editor/view for the task/todo list that the instructor/orchestrator/worker iterate over</li>
+        </ul>
+      </li>
     </ol>
     <h3>IDE specific</h3>
     <ol>
       <li><s>Rebrand. Go ahead and do it. Call it crow. Use the crow logo.</s></li>
       <li>Bring tinymist extension or whatever into contrib and make a default .typ view just like markdown (and enable for markdown as well!)</li>
       <li>ADD SCROLL TO TERMINAL!</li>
+      <li>Make highlighting text and adding quotes, parentheses, [, {, etc surround the highlighted text instead of replacing and be cautious of how that can clash with dedenting, copy over from vscode, sidex is very very rough on this. crow-ui has this. we might be able to learn from it lol.</li>
+      <li>Some kind of dirty indicator. Probably another one of these “learn from vscode/crow-ui how this works” situations lmfao. Hey at least they got git integration working for us.</li>
+      <li></li>
     </ol>
-    <math display="block">
-      <mover accent="true">
-        <mo>∇</mo>
-        <mo stretchy="true">⃗</mo>
-      </mover>
-      <mo lspace="0.2222222222222222em" rspace="0.2222222222222222em">⋅</mo>
-      <mover accent="true">
-        <mi>𝐸</mi>
-        <mo stretchy="true">⃗</mo>
-      </mover>
-      <mo>=</mo>
-      <mfrac>
-        <mi>𝜌</mi>
-        <msub>
-          <mi>𝜀</mi>
-          <mn>0</mn>
-        </msub>
-      </mfrac>
-    </math>
   </body>
 </html>

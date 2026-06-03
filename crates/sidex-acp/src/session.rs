@@ -613,23 +613,6 @@ impl AcpSession {
             })
             .collect();
 
-        // Broadcast user message so frontend can display it in chat history.
-        let user_text = content_blocks
-            .iter()
-            .filter_map(|b| match b {
-                ContentBlock::Text(t) => Some(t.text.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("");
-        let _ = self.events_tx.send(SessionEvent::Update {
-            session_id: self.session_id(),
-            update: serde_json::json!({
-                "sessionUpdate": "user_message_chunk",
-                "content": { "type": "text", "text": user_text },
-            }),
-        });
-
         {
             let mut state = self.prompt_turn_state.lock().await;
             *state = PromptTurnState::Running;
