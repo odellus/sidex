@@ -22,13 +22,13 @@ function fixReferences(literal: Record<string, unknown> | unknown[]) {
 				fixReferences(element as Record<string, unknown>);
 			}
 		});
-	} else if (typeof literal === 'object') {
+	} else if (typeof literal === 'object' && literal !== null) {
 		if (literal['$ref']) {
 			literal['$ref'] = literal['$ref'] + '2';
 		}
 		Object.getOwnPropertyNames(literal).forEach(property => {
 			const value = literal[property];
-			if (Array.isArray(value) || typeof value === 'object') {
+			if ((Array.isArray(value) || typeof value === 'object') && value !== null) {
 				fixReferences(value as Record<string, unknown>);
 			}
 		});

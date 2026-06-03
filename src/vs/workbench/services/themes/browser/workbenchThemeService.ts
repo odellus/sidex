@@ -17,7 +17,6 @@ import {
 	ThemeSettingDefaults,
 	COLOR_THEME_DARK_INITIAL_COLORS,
 	COLOR_THEME_LIGHT_INITIAL_COLORS,
-	CROW_PURPLE_INITIAL_COLORS,
 	migrateThemeSettingsId
 } from '../common/workbenchThemeService.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
@@ -115,13 +114,6 @@ function createBuiltInColorThemes(): ColorThemeData[] {
 			ThemeSettingDefaults.COLOR_THEME_HC_LIGHT,
 			undefined,
 			nls.localize('highContrastLightDescription', 'Default high contrast light theme')
-		),
-		ColorThemeData.createLoadedTheme(
-			`${ThemeTypeSelector.VS_DARK} sidex-builtin-crow-purple`,
-			'Crow Purple',
-			'Crow Purple',
-			CROW_PURPLE_INITIAL_COLORS,
-			'Vibrant purple theme with neon green accents'
 		)
 	];
 }
