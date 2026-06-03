@@ -120,13 +120,14 @@ pub struct ThemeRegistry {
 }
 
 impl ThemeRegistry {
-    /// Create a registry pre-loaded with the four built-in themes.
+    /// Create a registry pre-loaded with the five built-in themes.
     pub fn new() -> Self {
         let builtin = vec![
             crate::default_themes::dark_modern(),
             crate::default_themes::light_modern(),
             crate::default_themes::hc_black(),
             crate::default_themes::hc_light(),
+            crate::default_themes::crow_purple(),
         ];
         let active_theme_id = builtin[0].name.clone();
 

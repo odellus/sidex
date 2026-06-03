@@ -48,6 +48,16 @@ pub fn hc_light() -> Theme {
     }
 }
 
+/// "Crow Purple" — vibrant purple theme with excellent syntax highlighting.
+pub fn crow_purple() -> Theme {
+    Theme {
+        name: "Crow Purple".to_owned(),
+        kind: ThemeKind::Dark,
+        token_colors: crow_purple_tokens(),
+        workbench_colors: crow_purple_colors(),
+    }
+}
+
 fn tok(scope: &str, fg: &str) -> TokenColorRule {
     TokenColorRule {
         name: None,
@@ -756,6 +766,365 @@ fn hc_light_colors() -> WorkbenchColors {
     }
 }
 
+// ── Crow Purple workbench colors (based on Shades of Purple) ──────────
+
+#[allow(clippy::too_many_lines)]
+fn crow_purple_colors() -> WorkbenchColors {
+    WorkbenchColors {
+        // Editor
+        editor_background: c("#2D2B55"),
+        editor_foreground: c("#FFFFFF"),
+        editor_line_highlight_background: c("#1F1F41"),
+        editor_selection_background: c("#B362FF88"),
+        editor_inactive_selection_background: c("#7580B8C0"),
+        editor_selection_highlight_background: c("#7E46DF46"),
+        editor_word_highlight_background: c("#FFFFFF0D"),
+        editor_word_highlight_strong_background: c("#FFFFFF0D"),
+        editor_find_match_background: c("#ff7300ab"),
+        editor_find_match_highlight_background: c("#FFFF0336"),
+        editor_find_range_highlight_background: c("#FFFF0336"),
+        editor_line_number_foreground: c("#A599E9"),
+        editor_cursor_foreground: c("#39FF14"),
+        editor_whitespace_foreground: c("#FFFFFF1A"),
+        editor_indent_guide_background: c("#A599E90F"),
+        editor_indent_guide_active_background: c("#A599E942"),
+        editor_ruler_foreground: c("#A599E91C"),
+        editor_bracket_match_background: c("#AD70FC46"),
+        editor_bracket_match_border: c("#AD70FC46"),
+        editor_overview_ruler_border: c("#A599E91C"),
+        editor_gutter_added_background: c("#35AD68"),
+        editor_gutter_modified_background: c("#AD70FC46"),
+        editor_gutter_deleted_background: c("#EC3A37F5"),
+        editor_error_foreground: c("#EC3A37F5"),
+        editor_warning_foreground: c("#39FF14"),
+        editor_hover_highlight_background: c("#1E1E3F80"),
+        editor_link_active_foreground: c("#A599E9"),
+        editor_widget_background: c("#222244"),
+        editor_widget_border: c("#1F1F41"),
+        editor_suggest_widget_background: c("#1F1F41"),
+        editor_suggest_widget_border: c("#1F1F41"),
+        editor_suggest_widget_foreground: c("#A599E9"),
+        editor_suggest_widget_selected_background: c("#2D2B55"),
+        editor_hover_widget_background: c("#161633"),
+        editor_hover_widget_border: c("#161633"),
+
+        // Sidebar
+        side_bar_background: c("#222244"),
+        side_bar_foreground: c("#A599E9"),
+        side_bar_border: c("#25254B"),
+        side_bar_title_foreground: c("#A599E9"),
+        side_bar_section_header_background: c("#1E1E3F"),
+        side_bar_section_header_foreground: c("#A599E9"),
+        side_bar_section_header_border: c("#1E1E3F"),
+
+        // Activity Bar
+        activity_bar_background: c("#28284E"),
+        activity_bar_foreground: c("#FFFFFF"),
+        activity_bar_inactive_foreground: c("#A599E9"),
+        activity_bar_border: c("#222244"),
+        activity_bar_active_border: c("#6943ff62"),
+        activity_bar_active_background: c("#222244"),
+        activity_bar_badge_background: c("#39FF14"),
+        activity_bar_badge_foreground: c("#1E1E3F"),
+
+        // Status Bar
+        status_bar_background: c("#1E1E3F"),
+        status_bar_foreground: c("#A599E9"),
+        status_bar_border: c("#1E1E3F"),
+        status_bar_debugging_background: c("#39FF14"),
+        status_bar_debugging_foreground: c("#1E1E3F"),
+        status_bar_no_folder_background: c("#1E1E3F"),
+        status_bar_no_folder_foreground: c("#A599E9"),
+        status_bar_item_active_background: c("#4D21FC"),
+        status_bar_item_hover_background: c("#4D21FC"),
+
+        // Tabs
+        tab_active_background: c("#222244"),
+        tab_active_foreground: c("#FFFFFF"),
+        tab_inactive_background: c("#2D2B55"),
+        tab_inactive_foreground: c("#A599E9"),
+        tab_border: c("#1E1E3F"),
+        tab_active_border: c("#39FF14"),
+
+        // Panel
+        panel_background: c("#1E1E3F"),
+        panel_border: c("#39FF14"),
+        panel_title_active_foreground: c("#39FF14"),
+        panel_title_active_border: c("#39FF14"),
+        panel_title_inactive_foreground: c("#A599E9"),
+
+        // Lists
+        list_active_selection_background: c("#2D2B55"),
+        list_active_selection_foreground: c("#FFFFFF"),
+        list_focus_background: c("#2D2B55"),
+        list_focus_foreground: c("#FFFFFF"),
+        list_hover_background: c("#2D2B55"),
+        list_hover_foreground: c("#CEC5FF"),
+        list_inactive_selection_background: c("#2D2B55"),
+        list_inactive_selection_foreground: c("#AAAAAA"),
+        list_highlight_foreground: c("#39FF14"),
+        list_drop_background: c("#2D2B55"),
+
+        // Input
+        input_background: c("#2D2B55"),
+        input_foreground: c("#39FF14"),
+        input_border: c("#1E1E3F"),
+        input_placeholder_foreground: c("#A599E9"),
+
+        // Button
+        button_background: c("#39FF14dd"),
+        button_foreground: c("#222244"),
+        button_hover_background: c("#39FF14"),
+
+        // Badge
+        badge_background: c("#39FF14"),
+        badge_foreground: c("#1E1E3F"),
+
+        // Title Bar
+        title_bar_active_background: c("#1E1E3F"),
+        title_bar_active_foreground: c("#FFFFFF"),
+        title_bar_inactive_background: c("#1E1E3F"),
+        title_bar_inactive_foreground: c("#A599E9"),
+
+        // Terminal
+        terminal_background: c("#1E1E3F"),
+        terminal_foreground: c("#FFFFFF"),
+        terminal_cursor_foreground: c("#39FF14"),
+        terminal_cursor_background: c("#39FF14"),
+
+        // Git
+        git_decoration_modified_resource_foreground: c("#39FF14"),
+        git_decoration_deleted_resource_foreground: c("#EC3A37F5"),
+        git_decoration_untracked_resource_foreground: c("#3AD900"),
+        git_decoration_ignored_resource_foreground: c("#A599E981"),
+        git_decoration_conflict_resource_foreground: c("#FF7200"),
+
+        // Diff Editor
+        diff_editor_inserted_text_background: c("#3AD90020"),
+        diff_editor_removed_text_background: c("#EE3A4320"),
+
+        // Editor Groups
+        editor_group_border: c("#222244"),
+        editor_group_header_tabs_background: c("#2D2B55"),
+        editor_group_header_tabs_border: c("#1F1F41"),
+
+        // Notifications
+        notification_background: c("#1E1E3F"),
+        notification_foreground: c("#CEC5FF"),
+        notification_border: c("#2D2B55"),
+        notification_center_header_background: c("#6943FF"),
+        notification_center_header_foreground: c("#FFFFFF"),
+
+        // Breadcrumbs
+        breadcrumb_foreground: c("#A599E9"),
+        breadcrumb_focus_foreground: c("#39FF14"),
+        breadcrumb_active_selection_foreground: c("#FFFFFF"),
+        breadcrumb_picker_background: c("#1E1E3F"),
+
+        // Misc
+        foreground: c("#A599E9"),
+        focus_border: c("#1E1E3F"),
+        error_foreground: c("#EC3A37F5"),
+        description_foreground: c("#A599E9"),
+        selection_background: c("#B362FF"),
+        text_link_foreground: c("#B362FF"),
+        text_link_active_foreground: c("#B362FF"),
+        progress_bar_background: c("#39FF14"),
+        sash_hover_border: c("#39FF14"),
+
+        ..WorkbenchColors::default()
+    }
+}
+
+// ── Crow Purple token colors ──────────
+
+#[allow(clippy::too_many_lines)]
+fn crow_purple_tokens() -> Vec<TokenColorRule> {
+    vec![
+        // Comments - Purple
+        tok_styled("comment", "#B362FF", FontStyle::ITALIC),
+        tok_styled("comment.line", "#B362FF", FontStyle::ITALIC),
+        tok_styled("comment.block", "#B362FF", FontStyle::ITALIC),
+        tok_styled("comment.block.documentation", "#B362FF", FontStyle::ITALIC),
+        tok("punctuation.definition.comment", "#B362FF"),
+
+        // Entity - Green
+        tok("entity", "#39FF14"),
+        tok("entity.name", "#39FF14"),
+        tok("entity.name.type", "#80FFBB"),
+        tok("entity.name.function", "#39FF14"),
+        tok("entity.other.inherited-class", "#FFEE80"),
+
+        // Constant - Pink
+        tok("constant", "#FF628C"),
+        tok("constant.numeric", "#FF628C"),
+        tok("constant.language", "#FF628C"),
+        tok("constant.character", "#FF628C"),
+
+        // Keyword - Orange
+        tok("keyword", "#FF9D00"),
+        tok("keyword.control", "#FF9D00"),
+        tok("keyword.operator", "#FF9D00"),
+        tok_multi(&["keyword.other.rust", "keyword.other.nim"], "#FF9D00"),
+
+        // Storage - Green
+        tok("storage", "#39FF14"),
+        tok("storage.type", "#FF9D00"),
+        tok("storage.modifier", "#80FFBB"),
+        tok_styled("storage.type.function", "#FB94FF", FontStyle::NONE),
+
+        // String - Light Green
+        tok("string", "#A5FF90"),
+        tok("string.quoted", "#A5FF90"),
+        tok("string.template", "#3AD900"),
+        tok("punctuation.definition.string", "#A5FF90"),
+        tok("string.regexp", "#FB94FF"),
+
+        // Variable - Light Blue
+        tok("variable", "#E1EFFF"),
+        tok("variable.language", "#FB94FF"),
+        tok("variable.parameter", "#9EFFFF"),
+        tok("variable.other.property", "#FFEE80"),
+        tok("variable.other.object.property", "#FFEE80"),
+        tok_multi(
+            &[
+                "variable.other.readwrite",
+                "variable.other.object",
+                "variable.other.readwrite.alias",
+            ],
+            "#9EFFFF",
+        ),
+
+        // Support - Teal
+        tok("support", "#80FFBB"),
+        tok("support.function", "#FF9D00"),
+        tok("support.class", "#9EFFFF"),
+        tok("support.type", "#80FFBB"),
+
+        // Punctuation - Light Blue
+        tok("punctuation", "#E1EFFF"),
+        tok("punctuation.definition.parameters", "#FFEE80"),
+        tok("punctuation.definition.template-expression", "#FFEE80"),
+        tok("meta.brace", "#E1EFFF"),
+
+        // Meta - Cyan
+        tok("meta", "#9EFFFF"),
+        tok("meta.tag", "#9EFFFF"),
+        tok("meta.object-literal.key", "#80FFBB"),
+
+        // Invalid - Red
+        tok("invalid", "#EC3A37F5"),
+
+        // HTML/XML tags
+        tok("entity.name.tag", "#9EFFFF"),
+        tok("punctuation.definition.tag", "#9EFFFF"),
+        tok("meta.tag.other", "#9EFFFF"),
+
+        // CSS
+        tok("entity.other.attribute-name.class.css", "#9EFFFF"),
+        tok_multi(
+            &[
+                "entity.other.attribute-name.id.css",
+                "entity.other.attribute-name.pseudo-class.css",
+            ],
+            "#FFB454",
+        ),
+        tok("source.css entity", "#3AD900"),
+        tok("source.css support", "#A5FF90"),
+        tok("source.css constant", "#FFEE80"),
+        tok("source.css string", "#FFEE80"),
+        tok("source.css variable", "#9EFFFF"),
+
+        // JavaScript/TypeScript
+        tok("source.js storage.type.function", "#FB94FF"),
+        tok_multi(
+            &[
+                "entity.name.type.class.tsx",
+                "entity.name.type.class.jsx",
+                "entity.name.type.tsx",
+                "entity.name.type.jsx",
+            ],
+            "#9EFFFF",
+        ),
+        tok("meta.jsx.children", "#FFFFFF"),
+        tok("JSXNested", "#FFFFFF"),
+
+        // Python
+        tok("variable.parameter.function.language.special.self.python", "#9EFFFF"),
+        tok_multi(
+            &[
+                "meta.function-call.python",
+                "meta.function-call.generic.python",
+                "support.function.builtin.python",
+            ],
+            "#39FF14",
+        ),
+
+        // Rust
+        tok("keyword.other.fn.rust", "#FB94FF"),
+
+        // Markdown
+        tok_styled("entity.name.section.markdown", "#39FF14", FontStyle::BOLD),
+        tok_styled("markup.heading", "#39FF14", FontStyle::BOLD),
+        tok("meta.paragraph.markdown", "#FFFFFF"),
+        tok("markup.inline.raw.string.markdown", "#A599E9"),
+        tok_styled("markup.bold.markdown", "#FFFFFF", FontStyle::BOLD),
+        tok_styled("markup.italic.markdown", "#FFFFFF", FontStyle::ITALIC),
+        tok("markup.list.unnumbered.markdown", "#39FF14"),
+        tok("markup.underline.link.markdown", "#A599E9"),
+        tok("string.other.link.title.markdown", "#39FF14"),
+        tok("string.other.link.description.title.markdown", "#A5FF90"),
+        tok("markup.inserted", "#8efa00"),
+        tok("markup.deleted", "#F16E6B"),
+
+        // YAML
+        tok("entity.name.tag.yaml", "#39FF14"),
+
+        // JSON
+        tok("source.json support", "#39FF14"),
+        tok("source.json string", "#92FC79"),
+
+        // TOML
+        tok("keyword.key.toml", "#39FF14"),
+        tok("entity.other.attribute-name.table.toml", "#FF9D00"),
+
+        // Shell
+        tok("storage.type.function.shell", "#FB94FF"),
+        tok("variable.other.special.shell", "#FF9D00"),
+
+        // SQL
+        tok("source.sql keyword", "#FAEFA5"),
+        tok("source.sql support.function", "#39FF14"),
+        tok("keyword.other.DML.sql", "#FF9D00"),
+
+        // Go
+        tok_multi(&["keyword.package.go", "keyword.import.go"], "#FF9D00"),
+        tok("keyword.function.go", "#FB94FF"),
+        tok("variable.other.assignment.go", "#9EFFFF"),
+
+        // Ruby
+        tok("variable.other.constant.ruby", "#80FFBB"),
+        tok("entity.name.type.class.ruby", "#FB94FF"),
+        tok("variable.other.ruby", "#9EFFFF"),
+        tok("keyword.other.special-method.ruby", "#FFEE80"),
+
+        // PHP
+        tok("entity.name.function.php", "#39FF14"),
+        tok("variable.other.php", "#9EFFFF"),
+        tok("keyword.other.phpdoc.php", "#FF9D00"),
+        tok("storage.type.function.php", "#FB94FF"),
+
+        // C#
+        tok("storage.type.cs", "#9EFFFF"),
+        tok("storage.modifier.cs", "#80FFBB"),
+
+        // Git diff
+        tok("markup.inserted.diff", "#8efa00"),
+        tok("markup.deleted.diff", "#F16E6B"),
+        tok("meta.diff.header", "#B362FF"),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -787,5 +1156,14 @@ mod tests {
         let t = hc_light();
         assert_eq!(t.kind, ThemeKind::HighContrastLight);
         assert_eq!(t.workbench_colors.editor_background, c("#FFFFFF"));
+    }
+
+    #[test]
+    fn crow_purple_loads() {
+        let t = crow_purple();
+        assert_eq!(t.kind, ThemeKind::Dark);
+        assert_eq!(t.workbench_colors.editor_background, c("#2D2B55"));
+        assert!(!t.token_colors.is_empty());
+        assert!(t.token_colors.len() > 50, "Crow Purple should have comprehensive token colors");
     }
 }
