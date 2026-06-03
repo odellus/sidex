@@ -196,6 +196,79 @@ pub async fn acp_chat_new_session(
     })
 }
 
+/// Request type for loading an existing session.
+#[derive(Deserialize)]
+pub struct LoadSessionRequest {
+    pub connection_id: String,
+    pub session_id: String,
+    pub cwd: String,
+    #[serde(default)]
+    pub mcp_servers: Vec<Value>,
+}
+
+/// Bind a connection to an existing session (session/load).
+#[tauri::command]
+pub async fn acp_chat_load_session(
+    state: State<'_, Arc<AcpChatState>>,
+    request: LoadSessionRequest,
+) -> Result<NewSessionResponse, String> {
+    state.ensure_bridge();
+
+    let session = state
+        .session_manager
+        .bind_load_session(
+            &request.connection_id,
+            &request.session_id,
+            &request.cwd,
+            request.mcp_servers,
+            state.global_events.clone(),
+        )
+        .await
+        .map_err(|e| {
+            log::error!("[acp_chat] load_session failed: {e}");
+            e.to_string()
+        })?;
+
+    Ok(NewSessionResponse {
+        session_id: session.session_id(),
+    })
+}
+
+/// Request type for switching sessions.
+#[derive(Deserialize)]
+pub struct SwitchSessionRequest {
+    pub current_session_id: String,
+    pub target_session_id: String,
+    pub cwd: String,
+    #[serde(default)]
+    pub mcp_servers: Vec<Value>,
+}
+
+/// Switch an already-bound session to a different session (session/load on existing session).
+#[tauri::command]
+pub async fn acp_chat_switch_session(
+    state: State<'_, Arc<AcpChatState>>,
+    request: SwitchSessionRequest,
+) -> Result<NewSessionResponse, String> {
+    let session = state
+        .session_manager
+        .switch_session(
+            &request.current_session_id,
+            &request.target_session_id,
+            &request.cwd,
+            request.mcp_servers,
+        )
+        .await
+        .map_err(|e| {
+            log::error!("[acp_chat] switch_session failed: {e}");
+            e.to_string()
+        })?;
+
+    Ok(NewSessionResponse {
+        session_id: session.session_id(),
+    })
+}
+
 /// Send a prompt to a session.
 #[tauri::command]
 pub async fn acp_chat_prompt(

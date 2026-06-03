@@ -859,6 +859,8 @@ pub fn run() {
             // ACP Chat
             commands::acp_chat_spawn,
             commands::acp_chat_new_session,
+            commands::acp_chat_load_session,
+            commands::acp_chat_switch_session,
             commands::acp_chat_prompt,
             commands::acp_chat_cancel,
             commands::acp_chat_close_session,

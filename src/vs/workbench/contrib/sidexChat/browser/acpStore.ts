@@ -132,6 +132,10 @@ export class AcpStore {
 
 	// ─── Agent lifecycle ───────────────────────────────────────────────────
 
+	/**
+	 * Spawn an agent and connect to it. If we already have a session_id,
+	 * try to load that existing session first. If that fails, create a new one.
+	 */
 	async spawnAndConnect(config: {
 		name: string;
 		command: string;
@@ -139,11 +143,17 @@ export class AcpStore {
 		env: string[];
 		cwd: string;
 	}): Promise<void> {
+		// If we already have both IDs and are ready, don't reconnect
+		if (this._sessionId && this._connectionId && this._connectionStatus === 'ready') {
+			return;
+		}
+
 		this._connectionStatus = 'connecting';
 		this._cwd = config.cwd;
 		this._onDidChangeConnectionState.fire();
 
 		try {
+			// Spawn the agent process
 			const resp = await invoke<{ connection_id: string }>('acp_chat_spawn', {
 				request: {
 					name: config.name,
@@ -158,6 +168,28 @@ export class AcpStore {
 			}
 			this._connectionId = resp.connection_id;
 
+			// If we have a previous session_id, try to load it
+			if (this._sessionId) {
+				try {
+					const loadResp = await invoke<{ session_id: string }>('acp_chat_load_session', {
+						request: {
+							connection_id: this._connectionId,
+							session_id: this._sessionId,
+							cwd: config.cwd,
+							mcp_servers: [],
+						},
+					});
+					this._sessionId = loadResp.session_id;
+					this._connectionStatus = 'ready';
+					this._onDidChangeConnectionState.fire();
+					return;
+				} catch (e) {
+					// Load failed (session doesn't exist), fall through to create new
+					console.log('[AcpStore] load_session failed, creating new session:', e);
+				}
+			}
+
+			// Create a new session
 			const sessionResp = await invoke<{ session_id: string }>('acp_chat_new_session', {
 				request: {
 					connection_id: this._connectionId,
@@ -255,9 +287,31 @@ export class AcpStore {
 	}
 
 	async loadSession(sessionId: string): Promise<void> {
-		// For now: close current session, spawn new agent, load session
-		// This is a simplified version — proper session/load will come later
-		console.log('[acpStore] loadSession:', sessionId);
+		if (!this._sessionId) {
+			// No active session — can't switch
+			console.warn('[acpStore] loadSession: no active session');
+			return;
+		}
+
+		try {
+			const resp = await invoke<{ session_id: string }>('acp_chat_switch_session', {
+				request: {
+					current_session_id: this._sessionId,
+					target_session_id: sessionId,
+					cwd: this._cwd,
+					mcp_servers: [],
+				},
+			});
+
+			// Clear old notifications — the agent will replay the conversation
+			this._notifications = [];
+			this._sessionId = resp.session_id;
+			this._onDidChangeNotifications.fire();
+			this._onDidChangeConnectionState.fire();
+		} catch (e) {
+			console.error('[acpStore] loadSession failed:', e);
+			throw e;
+		}
 	}
 
 	// ─── Internal event handling ───────────────────────────────────────────

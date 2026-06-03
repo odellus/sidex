@@ -67,14 +67,8 @@ export class SidexChatSessionManager implements IDisposable {
 	}
 
 	private _cleanup(): void {
-		const now = Date.now();
-		for (const [id, session] of this._sessions) {
-			// Remove sessions not accessed in 30 minutes
-			if (now - session.lastAccessed > 1800000) {
-				session.store.dispose();
-				this._sessions.delete(id);
-			}
-		}
+		// Sessions persist indefinitely until explicitly closed by the user.
+		// No automatic garbage collection - users may want to keep sessions for days.
 	}
 
 	dispose(): void {

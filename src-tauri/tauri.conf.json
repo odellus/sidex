@@ -47,7 +47,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["deb", "rpm"],
     "copyright": "Copyright \u00a9 2026 Siden Technologies Inc. All rights reserved.",
     "category": "DeveloperTool",
     "shortDescription": "A fast, open-source code editor.",
