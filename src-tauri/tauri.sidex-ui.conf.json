@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "SideX",
+  "productName": "Crow",
   "version": "0.1.3",
-  "identifier": "com.siden.sidex",
+  "identifier": "com.crow.crow",
   "build": {
     "frontendDist": "../sidex-ui",
     "beforeDevCommand": "",
@@ -12,7 +12,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "SideX",
+        "title": "Crow",
         "width": 1280,
         "height": 800,
         "minWidth": 800,
@@ -45,10 +45,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "copyright": "Copyright \u00a9 2026 Siden Technologies Inc. All rights reserved.",
     "category": "DeveloperTool",
     "shortDescription": "A fast, open-source code editor.",
-    "longDescription": "SideX is a fast, lightweight, open-source code editor built for developers.",
+    "longDescription": "Crow is a fast, lightweight, open-source code editor built for developers.",
     "resources": [
       "extension-host/*",
       "shell-integration/*"

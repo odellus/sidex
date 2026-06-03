@@ -3,19 +3,120 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      /* Alignment */
+      mtable.right-align mtd,
+      mtable mtd.right-align,
+      mtable.left-align mtd.right-align,
+      mtable.aligned mtd:nth-child(odd) {
+        justify-items: end;
+        text-align: right;
+      }
+      mtable.cases mtd,
+      mtable.left-align mtd,
+      mtable mtd.left-align,
+      mtable.aligned mtd:nth-child(even),
+      math:is(:not([display])) > mtable.multiline-equation mtd {
+        justify-items: start;
+        text-align: left;
+      }
+      mtable.cases mtd,
+      mtable.aligned mtd,
+      mtable mtd.flushed,
+      mtable mtd.left-flush {
+        padding-left: 0;
+      }
+      mtable.cases mtd,
+      mtable.aligned mtd,
+      mtable mtd.flushed,
+      mtable mtd.right-flush {
+        padding-right: 0;
+      }
+      
+      /* Tables */
+      mtable {
+        math-style: inherit;
+      }
+      mtd {
+        math-depth: auto-add;
+        math-style: compact;
+        math-shift: compact;
+      }
+      
+      /* Equations */
+      mtable.multiline-equation mtd {
+        math-depth: inherit;
+        math-style: inherit;
+        math-shift: inherit;
+        padding: 0;
+      }
+      math > mtable.multiline-equation mtr:not(:last-child) mtd {
+        padding-bottom: 0.5em;
+      }
+      
+      /* Fractions */
+      mfrac {
+        padding-inline: 0;
+        margin-inline: 0.1em;
+      }
+      
+      /* Accents */
+      mover[accent="true" i] > :first-child {
+        font-feature-settings: "dtls";
+      }
+      mover.dotted[accent="true" i] > :first-child {
+        font-feature-settings: "dtls" 0;
+      }
+      
+      /* Other rules for scriptlevel, displaystyle and math-shift */
+      munder > :nth-child(2),
+      munderover > :nth-child(2) {
+        math-shift: compact
+      }
+      munder[accentunder="true" i] > :not(:first-child),
+      mover[accent="true" i] > :not(:first-child) {
+        math-depth: inherit;
+        math-style: inherit;
+        math-shift: inherit;
+      }
+    </style>
   </head>
   <body>
     <h2>TO DO</h2>
+    <h3>Chat specific</h3>
     <ol>
-      <li>Rebrand. Go ahead and do it. Call it crow. Use the crow logo.</li>
-      <li>Bring tinymist extension or whatever into contrib and make a default .typ view just like markdown (and enable for markdown as well!)</li>
       <li>Get rid of echo of user message and improper formatting of user response</li>
       <li>Proper syntax highlighting for typst (WYSIWYG?) and good @ context mechanism in the rich text editor. Enable scroll wheel. Resizing. Change the default color of the text to same white as text in chat.</li>
       <li>Pull thinking tokens out of the weird scrollable box they’re in and enable syntax highlighting for their thoughts</li>
       <li>Add diff fixtures for edit and write</li>
       <li>Add terminal fixture that is a “real terminal” in other words xterm.js</li>
       <li>Make all text in chat brighter. it’s a dark theme. can barely see text right now. too muted.</li>
+      <li>Model selection in chat</li>
+    </ol>
+    <h3>IDE specific</h3>
+    <ol>
+      <li><s>Rebrand. Go ahead and do it. Call it crow. Use the crow logo.</s></li>
+      <li>Bring tinymist extension or whatever into contrib and make a default .typ view just like markdown (and enable for markdown as well!)</li>
       <li>ADD SCROLL TO TERMINAL!</li>
     </ol>
+    <math display="block">
+      <mover accent="true">
+        <mo>∇</mo>
+        <mo stretchy="true">⃗</mo>
+      </mover>
+      <mo lspace="0.2222222222222222em" rspace="0.2222222222222222em">⋅</mo>
+      <mover accent="true">
+        <mi>𝐸</mi>
+        <mo stretchy="true">⃗</mo>
+      </mover>
+      <mo>=</mo>
+      <mfrac>
+        <mi>𝜌</mi>
+        <msub>
+          <mi>𝜀</mi>
+          <mn>0</mn>
+        </msub>
+      </mfrac>
+    </math>
   </body>
 </html>

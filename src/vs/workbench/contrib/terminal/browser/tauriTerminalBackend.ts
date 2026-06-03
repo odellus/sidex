@@ -119,7 +119,7 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 			}
 			envToPass['TERM'] = 'xterm-256color';
 			envToPass['COLORTERM'] = 'truecolor';
-			envToPass['TERM_PROGRAM'] = 'SideX';
+			envToPass['TERM_PROGRAM'] = 'Crow';
 			if (!envToPass['LANG']) {
 				envToPass['LANG'] = 'en_US.UTF-8';
 			}

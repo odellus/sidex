@@ -1,7 +1,7 @@
 [package]
-name = "sidex"
+name = "crow"
 version = "0.1.3"
-description = "SideX - A fast, open-source code editor"
+description = "Crow - A fast, open-source code editor"
 authors = ["Siden Technologies Inc"]
 license = "MIT"
 repository = "https://github.com/sidenai/sidex"
@@ -9,7 +9,7 @@ edition = "2021"
 rust-version = "1.91.0"
 
 [[bin]]
-name = "SideX"
+name = "Crow"
 path = "src/main.rs"
 
 [lib]

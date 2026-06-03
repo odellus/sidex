@@ -293,8 +293,8 @@
 }
 
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .window-appicon:not(.codicon) {
-	-webkit-mask: url('../../../media/code-icon.svg') no-repeat center center / 20px;
-	mask: url('../../../media/code-icon.svg') no-repeat center center / 20px;
+	-webkit-mask: url('../../../media/crow-icon.svg') no-repeat center center / 20px;
+	mask: url('../../../media/crow-icon.svg') no-repeat center center / 20px;
 	background-color: var(--vscode-titleBar-activeForeground);
 }
 

@@ -63,11 +63,11 @@ else {
 	if (Object.keys(product).length === 0) {
 		Object.assign(product, {
 			version: '1.110.0',
-			nameShort: 'SideX',
-			nameLong: 'SideX',
-			applicationName: 'sidex',
-			dataFolderName: '.sidex',
-			urlProtocol: 'sidex',
+			nameShort: 'Crow',
+			nameLong: 'Crow',
+			applicationName: 'crow',
+			dataFolderName: '.crow',
+			urlProtocol: 'crow',
 			reportIssueUrl: 'https://github.com/Razshy/sidexvs/issues/new',
 			licenseName: 'MIT',
 			licenseUrl: 'https://github.com/Razshy/sidexvs/blob/main/LICENSE',
