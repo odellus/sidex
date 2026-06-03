@@ -1,6 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  SidexChatEditor — EditorPane that renders a chat session as an editor tab.
- *  Uses SidexChatSessionManager to persist sessions across tab switches.
+ *  AcpChatEditor — EditorPane that renders a chat session as an editor tab.
+ *  Uses AcpChatSessionManager to persist sessions across tab switches.
  *
  *  Lifecycle: createEditor() → setInput() → [tab switch] → setInput() again
  *
@@ -25,17 +25,17 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { AcpStore } from './acpStore.js';
 import { ScrollManager } from './scrollManager.js';
-import { SidexChatSessionManager } from './sidexChatSessionManager.js';
+import { AcpChatSessionManager } from './acpChatSessionManager.js';
 import { ChatHeader } from './components/toolbar/chatHeader.js';
 import { ChatInput } from './components/input/chatInput.js';
 import { UserMessage } from './components/messages/userMessage.js';
 import { ThinkingBlock } from './components/messages/thinkingBlock.js';
 import { AgentMessageGroup } from './components/messages/agentMessage.js';
 import { ToolCallGroup } from './components/tools/toolCallGroup.js';
-import { sidexChatEditorId } from './sidexChatEditorInput.js';
-import { SidexChatEditorInput } from './sidexChatEditorInput.js';
+import { acpChatEditorId } from './acpChatEditorInput.js';
+import { AcpChatEditorInput } from './acpChatEditorInput.js';
 import type { AcpNotification } from './acp-utils.js';
-import './media/sidexChatView.css';
+import './media/acpChatView.css';
 
 const $ = dom.$;
 
@@ -56,11 +56,11 @@ interface SessionView {
 	lastGroupComp: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup | null;
 }
 
-export class SidexChatEditor extends EditorPane {
-	static readonly ID = sidexChatEditorId;
+export class AcpChatEditor extends EditorPane {
+	static readonly ID = acpChatEditorId;
 
-	private _sessionManager = SidexChatSessionManager.getInstance();
-	private _editorInput?: SidexChatEditorInput;
+	private _sessionManager = AcpChatSessionManager.getInstance();
+	private _editorInput?: AcpChatEditorInput;
 	private _acpStore?: AcpStore;
 	private _currentSessionId?: string;
 
@@ -96,11 +96,11 @@ export class SidexChatEditor extends EditorPane {
 		@IWorkspaceContextService private readonly _workspaceContext: IWorkspaceContextService,
 		@ICommandService private readonly _commandService: ICommandService
 	) {
-		super(SidexChatEditor.ID, group, telemetryService, themeService, storageService);
+		super(AcpChatEditor.ID, group, telemetryService, themeService, storageService);
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this._rootEl = dom.append(parent, $('div.sidex-chat-view'));
+		this._rootEl = dom.append(parent, $('div.acp-chat-view'));
 
 		// Header is shared across sessions (stateless toolbar)
 		this._header = new ChatHeader();
@@ -109,7 +109,7 @@ export class SidexChatEditor extends EditorPane {
 	}
 
 	override async setInput(
-		input: SidexChatEditorInput,
+		input: AcpChatEditorInput,
 		options: IEditorOptions | undefined,
 		context: IEditorOpenContext,
 		token: CancellationToken
@@ -119,7 +119,7 @@ export class SidexChatEditor extends EditorPane {
 
 		const sessionId = input.sessionId;
 		if (!sessionId) {
-			throw new Error('SidexChatEditorInput must have a sessionId');
+			throw new Error('AcpChatEditorInput must have a sessionId');
 		}
 
 		// Save the current session's view state before switching
@@ -247,7 +247,7 @@ export class SidexChatEditor extends EditorPane {
 				} else if (action === 'export') {
 					this._exportChat();
 				} else if (action === 'open_in_editor') {
-					this._commandService.executeCommand('workbench.action.openSidexChatEditor');
+					this._commandService.executeCommand('workbench.action.openAcpChatEditor');
 				}
 			})
 		);
@@ -300,10 +300,10 @@ export class SidexChatEditor extends EditorPane {
 				return;
 			} catch (e) {
 				if (attempt < 2) {
-					console.warn(`[SidexChatEditor] connect attempt ${attempt + 1} failed, retrying...`);
+					console.warn(`[AcpChatEditor] connect attempt ${attempt + 1} failed, retrying...`);
 					await new Promise(r => setTimeout(r, 2000));
 				} else {
-					console.error('[SidexChatEditor] connect failed:', e);
+					console.error('[AcpChatEditor] connect failed:', e);
 				}
 			}
 		}

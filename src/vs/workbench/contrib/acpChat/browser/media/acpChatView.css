@@ -1,8 +1,8 @@
 /* Sidex — Cursor-aligned design */
 
 /* Custom Sidex status bar icons — override font glyph with SVG */
-.codicon-sidex-panel-open::before,
-.codicon-sidex-panel-closed::before {
+.codicon-acp-panel-open::before,
+.codicon-acp-panel-closed::before {
 	content: '' !important;
 	display: inline-block;
 	width: 16px;
@@ -19,18 +19,18 @@
 	vertical-align: text-bottom;
 }
 
-.codicon-sidex-panel-open::before {
-	-webkit-mask-image: url('./icons/opensidex.svg');
-	mask-image: url('./icons/opensidex.svg');
+.codicon-acp-panel-open::before {
+	-webkit-mask-image: url('./icons/openacp.svg');
+	mask-image: url('./icons/openacp.svg');
 }
 
-.codicon-sidex-panel-closed::before {
-	-webkit-mask-image: url('./icons/closesidex.svg');
-	mask-image: url('./icons/closesidex.svg');
+.codicon-acp-panel-closed::before {
+	-webkit-mask-image: url('./icons/closeacp.svg');
+	mask-image: url('./icons/closeacp.svg');
 }
 
 /* ===== Root Container ===== */
-.sidex-chat-view {
+.acp-chat-view {
 	display: flex;
 	flex-direction: column;
 	height: 100%;
@@ -1513,7 +1513,7 @@
 }
 
 /* ===== CMD+K Inline Edit Widget ===== */
-.sidex-inline-edit-widget {
+.acp-inline-edit-widget {
 	z-index: 50;
 	min-width: 340px;
 	max-width: 560px;
@@ -1526,18 +1526,18 @@
 	animation: sc-fade-in 0.1s ease-out;
 }
 
-.sidex-inline-edit-widget.loading {
+.acp-inline-edit-widget.loading {
 	opacity: 0.85;
 }
 
-.sidex-inline-edit-row {
+.acp-inline-edit-row {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	padding: 6px 10px;
 }
 
-.sidex-inline-edit-label {
+.acp-inline-edit-label {
 	font-size: 12px;
 	font-weight: 600;
 	color: var(--vscode-foreground);
@@ -1545,7 +1545,7 @@
 	opacity: 0.7;
 }
 
-.sidex-inline-edit-input {
+.acp-inline-edit-input {
 	flex: 1;
 	background: transparent;
 	border: none;
@@ -1558,15 +1558,15 @@
 	min-width: 200px;
 }
 
-.sidex-inline-edit-input::placeholder {
+.acp-inline-edit-input::placeholder {
 	color: var(--vscode-input-placeholderForeground);
 }
 
-.sidex-inline-edit-input:disabled {
+.acp-inline-edit-input:disabled {
 	opacity: 0.5;
 }
 
-.sidex-inline-edit-hint {
+.acp-inline-edit-hint {
 	font-size: 11px;
 	color: var(--vscode-descriptionForeground);
 	opacity: 0.5;
@@ -1577,30 +1577,30 @@
 }
 
 /* ===== Inline Edit Selection Highlight ===== */
-.sidex-inline-edit-selection {
+.acp-inline-edit-selection {
 	background: var(--vscode-editor-selectionBackground);
 	opacity: 0.3;
 }
 
 /* ===== Inline Diff Decorations ===== */
-.sidex-inline-diff-removed {
+.acp-inline-diff-removed {
 	background: var(--vscode-diffEditor-removedTextBackground) !important;
 	text-decoration: line-through;
 	opacity: 0.7;
 }
 
-.sidex-inline-diff-glyph-removed {
+.acp-inline-diff-glyph-removed {
 	background: var(--vscode-gitDecoration-deletedResourceForeground, var(--vscode-terminal-ansiRed));
 	width: 3px !important;
 	margin-left: 3px;
 	border-radius: 1px;
 }
 
-.sidex-inline-diff-added {
+.acp-inline-diff-added {
 	background: transparent;
 }
 
-.sidex-inline-diff-added-text {
+.acp-inline-diff-added-text {
 	color: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-terminal-ansiGreen));
 	background: var(--vscode-diffEditor-insertedTextBackground);
 	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
@@ -1610,7 +1610,7 @@
 }
 
 /* ===== Accept/Reject Action Buttons ===== */
-.sidex-inline-edit-actions {
+.acp-inline-edit-actions {
 	position: absolute;
 	top: 0;
 	right: 20px;
@@ -1625,8 +1625,8 @@
 	animation: sc-fade-in 0.1s ease-out;
 }
 
-.sidex-inline-edit-accept,
-.sidex-inline-edit-reject {
+.acp-inline-edit-accept,
+.acp-inline-edit-reject {
 	padding: 3px 12px;
 	border-radius: 4px;
 	font-size: 12px;
@@ -1636,21 +1636,21 @@
 	transition: background 0.1s ease, color 0.1s ease;
 }
 
-.sidex-inline-edit-accept {
+.acp-inline-edit-accept {
 	background: var(--vscode-button-background);
 	color: var(--vscode-button-foreground);
 }
 
-.sidex-inline-edit-accept:hover {
+.acp-inline-edit-accept:hover {
 	background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
 }
 
-.sidex-inline-edit-reject {
+.acp-inline-edit-reject {
 	background: transparent;
 	color: var(--vscode-foreground);
 	border-color: var(--vscode-widget-border);
 }
 
-.sidex-inline-edit-reject:hover {
+.acp-inline-edit-reject:hover {
 	background: var(--vscode-list-hoverBackground);
 }

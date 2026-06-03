@@ -1,14 +1,14 @@
 /*---------------------------------------------------------------------------------------------
- *  Sidex Chat URI helpers — generate and parse sidex-chat:// URIs.
+ *  ACP Chat URI helpers — generate and parse acp-chat:// URIs.
  *  Each editor tab gets a unique URI encoding its session ID.
  *--------------------------------------------------------------------------------------------*/
 
 import { Schemas } from '../../../../base/common/network.js';
 import { URI } from '../../../../base/common/uri.js';
 
-export namespace SidexChatUri {
+export namespace AcpChatUri {
 
-	const scheme = Schemas.sidexChat;
+	const scheme = Schemas.acpChat;
 
 	/** Create a new URI for a fresh chat editor tab. */
 	export function getNewEditorUri(): URI {
@@ -21,7 +21,7 @@ export namespace SidexChatUri {
 		return URI.from({ scheme, path: `/${sessionId}` });
 	}
 
-	/** Extract the session ID from a sidex-chat URI, or undefined if not one. */
+	/** Extract the session ID from an ACP Chat URI, or undefined if not one. */
 	export function parseSessionId(resource: URI): string | undefined {
 		if (resource.scheme !== scheme) {
 			return undefined;

@@ -30,23 +30,23 @@ export class InlineEditInputWidget extends Disposable implements IContentWidget 
 		column: number,
 	) {
 		super();
-		this._id = `sidex.inlineEditInput.${InlineEditInputWidget._idCounter++}`;
+		this._id = `acpChat.inlineEditInput.${InlineEditInputWidget._idCounter++}`;
 		this._lineNumber = lineNumber;
 		this._column = column;
 
 		this._domNode = document.createElement('div');
-		this._domNode.className = 'sidex-inline-edit-widget';
+		this._domNode.className = 'acp-inline-edit-widget';
 
 		const row = document.createElement('div');
-		row.className = 'sidex-inline-edit-row';
+		row.className = 'acp-inline-edit-row';
 
 		const label = document.createElement('span');
-		label.className = 'sidex-inline-edit-label';
+		label.className = 'acp-inline-edit-label';
 		label.textContent = 'Edit';
 		row.appendChild(label);
 
 		this._input = document.createElement('input');
-		this._input.className = 'sidex-inline-edit-input';
+		this._input.className = 'acp-inline-edit-input';
 		this._input.type = 'text';
 		this._input.placeholder = 'Describe the change...';
 		this._input.setAttribute('autocomplete', 'off');
@@ -55,7 +55,7 @@ export class InlineEditInputWidget extends Disposable implements IContentWidget 
 		row.appendChild(this._input);
 
 		const hint = document.createElement('span');
-		hint.className = 'sidex-inline-edit-hint';
+		hint.className = 'acp-inline-edit-hint';
 		hint.textContent = 'Enter';
 		row.appendChild(hint);
 

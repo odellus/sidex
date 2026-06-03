@@ -1,8 +1,8 @@
 /*---------------------------------------------------------------------------------------------
- *  Sidex Chat View — Composes component classes into the chat panel
+ *  ACP Chat View — Composes component classes into the chat panel
  *--------------------------------------------------------------------------------------------*/
 
-import './media/sidexChatView.css';
+import './media/acpChatView.css';
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
 import * as DOM from '../../../../base/browser/dom.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
@@ -14,7 +14,7 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
-import { ISidexChatService } from './sidexChatService.js';
+import { IAcpChatService } from './acpChatService.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ScrollManager } from './scrollManager.js';
@@ -33,7 +33,7 @@ interface GroupComponent {
 	component: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup;
 }
 
-export class SidexChatViewPane extends ViewPane {
+export class AcpChatViewPane extends ViewPane {
 	private _header!: ChatHeader;
 	private _messagesEl!: HTMLElement;
 	private _welcomeEl!: HTMLElement;
@@ -58,7 +58,7 @@ export class SidexChatViewPane extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
-		@ISidexChatService private readonly chatService: ISidexChatService,
+		@IAcpChatService private readonly chatService: IAcpChatService,
 		@ICommandService private readonly _commandService: ICommandService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
@@ -66,7 +66,7 @@ export class SidexChatViewPane extends ViewPane {
 
 	protected override renderBody(parent: HTMLElement): void {
 		super.renderBody(parent);
-		parent.classList.add('sidex-chat-view');
+		parent.classList.add('acp-chat-view');
 
 		this._header = new ChatHeader();
 		this._header.appendTo(parent);
@@ -281,7 +281,7 @@ export class SidexChatViewPane extends ViewPane {
 	}
 
 	private _openInEditor(): void {
-		this._commandService.executeCommand('workbench.action.openSidexChatEditor');
+		this._commandService.executeCommand('workbench.action.openAcpChatEditor');
 	}
 
 	private _exportChat(): void {
@@ -303,6 +303,6 @@ export class SidexChatViewPane extends ViewPane {
 	}): void {
 		if (!this._messagesEl) { return; }
 		// For now, just log permission requests — full implementation later
-		console.log('[sidexChatView] Permission request:', data);
+		console.log('[acpChatView] Permission request:', data);
 	}
 }

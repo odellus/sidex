@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Sidex — The built-in AI panel for Sidex IDE.
+ *  ACP Chat — The built-in AI panel for Sidex IDE.
  *  Registered in the AuxiliaryBar with its own status bar toggle.
  *--------------------------------------------------------------------------------------------*/
 
@@ -25,24 +25,24 @@ import { IStatusbarService, StatusbarAlignment } from '../../../services/statusb
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
 import { EditorExtensions, IEditorFactoryRegistry } from '../../../common/editor.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
-import { SidexChatViewPane } from './sidexChatView.js';
-import { SidexChatEditor } from './sidexChatEditor.js';
-import { SidexChatEditorInput, sidexChatEditorId } from './sidexChatEditorInput.js';
-import { SidexChatEditorInputSerializer } from './sidexChatEditorSerializer.js';
-import { SidexChatUri } from './sidexChatUri.js';
-import './sidexChatService.js';
+import { AcpChatViewPane } from './acpChatView.js';
+import { AcpChatEditor } from './acpChatEditor.js';
+import { AcpChatEditorInput, acpChatEditorId } from './acpChatEditorInput.js';
+import { AcpChatEditorInputSerializer } from './acpChatEditorSerializer.js';
+import { AcpChatUri } from './acpChatUri.js';
+import './acpChatService.js';
 
-export const SIDEX_CHAT_CONTAINER_ID = 'workbench.view.sidexChat';
-export const SIDEX_CHAT_VIEW_ID = 'workbench.view.sidexChat.main';
+export const ACP_CHAT_CONTAINER_ID = 'workbench.view.acpChat';
+export const ACP_CHAT_VIEW_ID = 'workbench.view.acpChat.main';
 
-const sidexChatIcon = registerIcon('sidex-chat-icon', Codicon.commentDiscussion, nls.localize('sidexChatIcon', 'Sidex icon'));
+const acpChatIcon = registerIcon('acp-chat-icon', Codicon.commentDiscussion, nls.localize('acpChatIcon', 'ACP Chat icon'));
 
 const viewContainer = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewContainersRegistry).registerViewContainer(
 	{
-		id: SIDEX_CHAT_CONTAINER_ID,
-		title: nls.localize2('sidex', 'Sidex'),
-		icon: sidexChatIcon,
-		ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [SIDEX_CHAT_CONTAINER_ID, { mergeViewWithContainerWhenSingleView: true }]),
+		id: ACP_CHAT_CONTAINER_ID,
+		title: nls.localize2('acpChat', 'ACP Chat'),
+		icon: acpChatIcon,
+		ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [ACP_CHAT_CONTAINER_ID, { mergeViewWithContainerWhenSingleView: true }]),
 		hideIfEmpty: false,
 		order: -100,
 	},
@@ -53,10 +53,10 @@ const viewContainer = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewCo
 Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews(
 	[
 		{
-			id: SIDEX_CHAT_VIEW_ID,
-			name: nls.localize2('sidex', 'Sidex'),
-			containerIcon: sidexChatIcon,
-			ctorDescriptor: new SyncDescriptor(SidexChatViewPane),
+			id: ACP_CHAT_VIEW_ID,
+			name: nls.localize2('acpChat', 'ACP Chat'),
+			containerIcon: acpChatIcon,
+			ctorDescriptor: new SyncDescriptor(AcpChatViewPane),
 			canToggleVisibility: true,
 			canMoveView: true,
 			hideByDefault: false,
@@ -68,27 +68,27 @@ Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews(
 // ── Editor registration (chat as a tab in the editor area) ──
 
 Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(
-	SidexChatEditorInput.ID,
-	SidexChatEditorInputSerializer,
+	AcpChatEditorInput.ID,
+	AcpChatEditorInputSerializer,
 );
 Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
-	EditorPaneDescriptor.create(SidexChatEditor, sidexChatEditorId, nls.localize('sidexChat', 'Sidex Chat')),
-	[new SyncDescriptor(SidexChatEditorInput)],
+	EditorPaneDescriptor.create(AcpChatEditor, acpChatEditorId, nls.localize('acpChat', 'ACP Chat')),
+	[new SyncDescriptor(AcpChatEditorInput)],
 );
 
 // Command: open a NEW chat in editor area (always creates a fresh session)
 registerAction2(class extends Action2 {
 	constructor() {
 		super({
-			id: 'workbench.action.openSidexChatEditor',
-			title: nls.localize2('openSidexChatEditor', 'Open Sidex Chat in Editor'),
+			id: 'workbench.action.openAcpChatEditor',
+			title: nls.localize2('openAcpChatEditor', 'Open ACP Chat in Editor'),
 			f1: true,
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const editorService = accessor.get(IEditorService);
-		const uri = SidexChatUri.getNewEditorUri();
-		const input = new SidexChatEditorInput(uri);
+		const uri = AcpChatUri.getNewEditorUri();
+		const input = new AcpChatEditorInput(uri);
 		await editorService.openEditor(input, { pinned: true });
 	}
 });
@@ -97,8 +97,8 @@ registerAction2(class extends Action2 {
 registerAction2(class extends Action2 {
 	constructor() {
 		super({
-			id: 'workbench.action.toggleSidexChat',
-			title: nls.localize2('toggleSidex', 'Toggle Sidex'),
+			id: 'workbench.action.toggleAcpChat',
+			title: nls.localize2('toggleAcpChat', 'Toggle ACP Chat'),
 			keybinding: {
 				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyI,
 				weight: KeybindingWeight.WorkbenchContrib,
@@ -116,8 +116,8 @@ registerAction2(class extends Action2 {
 registerAction2(class extends Action2 {
 	constructor() {
 		super({
-			id: 'workbench.action.sidexStatusBarToggle',
-			title: nls.localize2('sidexStatusBarToggle', 'Toggle Sidex'),
+			id: 'workbench.action.acpChatStatusBarToggle',
+			title: nls.localize2('acpChatStatusBarToggle', 'Toggle ACP Chat'),
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
@@ -132,34 +132,34 @@ import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase 
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
-import { SidexCompletionProvider } from './autocomplete/sidexCompletionProvider.js';
+import { AcpCompletionProvider } from './autocomplete/acpCompletionProvider.js';
 import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
 import { InlineEditController } from './inline/inlineEditController.js';
 import { isCodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { EditorContextKeys } from '../../../../editor/common/editorContextKeys.js';
 
-class SidexStatusBarContribution implements IWorkbenchContribution {
-	static readonly ID = 'sidex.statusbar';
+class AcpChatStatusBarContribution implements IWorkbenchContribution {
+	static readonly ID = 'acpChat.statusbar';
 
 	constructor(
 		@IStatusbarService private readonly statusbarService: IStatusbarService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 	) {
-		// Sidex panel toggle (far right)
-		const sidexEntry = statusbarService.addEntry(
+		// ACP Chat panel toggle (far right)
+		const acpChatEntry = statusbarService.addEntry(
 			{
-				name: nls.localize('sidexToggle', 'Sidex'),
-				text: this._sidexIcon(),
-				ariaLabel: nls.localize('toggleSidex', 'Toggle Sidex'),
-				command: 'workbench.action.sidexStatusBarToggle',
-				tooltip: this._sidexTooltip(),
+				name: nls.localize('acpChatToggle', 'ACP Chat'),
+				text: this._acpChatIcon(),
+				ariaLabel: nls.localize('toggleAcpChat', 'Toggle ACP Chat'),
+				command: 'workbench.action.acpChatStatusBarToggle',
+				tooltip: this._acpChatTooltip(),
 			},
-			'sidex.toggle',
+			'acpChat.toggle',
 			StatusbarAlignment.RIGHT,
 			-1000
 		);
 
-		// Secondary sidebar toggle (next to Sidex, for Claude Code etc.)
+		// Secondary sidebar toggle (next to ACP Chat, for Claude Code etc.)
 		const auxEntry = statusbarService.addEntry(
 			{
 				name: nls.localize('auxToggle', 'Secondary Sidebar'),
@@ -168,19 +168,19 @@ class SidexStatusBarContribution implements IWorkbenchContribution {
 				command: 'workbench.action.toggleAuxiliaryBar',
 				tooltip: this._auxTooltip(),
 			},
-			'sidex.aux.toggle',
+			'acpChat.aux.toggle',
 			StatusbarAlignment.RIGHT,
 			-999
 		);
 
 		// Update icons when visibility changes
 		const update = () => {
-			sidexEntry.update({
-				name: nls.localize('sidexToggle', 'Sidex'),
-				text: this._sidexIcon(),
-				ariaLabel: nls.localize('toggleSidex', 'Toggle Sidex'),
-				command: 'workbench.action.sidexStatusBarToggle',
-				tooltip: this._sidexTooltip(),
+			acpChatEntry.update({
+				name: nls.localize('acpChatToggle', 'ACP Chat'),
+				text: this._acpChatIcon(),
+				ariaLabel: nls.localize('toggleAcpChat', 'Toggle ACP Chat'),
+				command: 'workbench.action.acpChatStatusBarToggle',
+				tooltip: this._acpChatTooltip(),
 			});
 			auxEntry.update({
 				name: nls.localize('auxToggle', 'Secondary Sidebar'),
@@ -198,14 +198,14 @@ class SidexStatusBarContribution implements IWorkbenchContribution {
 		(this as unknown as { dispose?: IDisposable }).dispose = { dispose: () => clearInterval(interval) } as IDisposable;
 	}
 
-	private _sidexIcon(): string {
+	private _acpChatIcon(): string {
 		return this.layoutService.isVisible(Parts.AUXILIARYBAR_PART)
-			? '$(sidex-panel-open)'
-			: '$(sidex-panel-closed)';
+			? '$(acp-panel-open)'
+			: '$(acp-panel-closed)';
 	}
 
-	private _sidexTooltip(): string {
-		return this.layoutService.isVisible(Parts.AUXILIARYBAR_PART) ? 'Hide Sidex' : 'Show Sidex';
+	private _acpChatTooltip(): string {
+		return this.layoutService.isVisible(Parts.AUXILIARYBAR_PART) ? 'Hide ACP Chat' : 'Show ACP Chat';
 	}
 
 	private _auxIcon(): string {
@@ -219,21 +219,21 @@ class SidexStatusBarContribution implements IWorkbenchContribution {
 	}
 }
 
-registerWorkbenchContribution2(SidexStatusBarContribution.ID, SidexStatusBarContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(AcpChatStatusBarContribution.ID, AcpChatStatusBarContribution, WorkbenchPhase.AfterRestored);
 
-class SidexInlineCompletionContribution implements IWorkbenchContribution {
-	static readonly ID = 'sidex.inlineCompletion';
+class AcpChatInlineCompletionContribution implements IWorkbenchContribution {
+	static readonly ID = 'acpChat.inlineCompletion';
 
 	constructor(
 		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
 		@IConfigurationService configurationService: IConfigurationService,
 	) {
-		const provider = new SidexCompletionProvider(configurationService);
+		const provider = new AcpCompletionProvider(configurationService);
 		languageFeaturesService.inlineCompletionsProvider.register('*', provider);
 	}
 }
 
-registerWorkbenchContribution2(SidexInlineCompletionContribution.ID, SidexInlineCompletionContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(AcpChatInlineCompletionContribution.ID, AcpChatInlineCompletionContribution, WorkbenchPhase.AfterRestored);
 
 // --- CMD+K Inline Edit ---
 
@@ -243,8 +243,8 @@ const controllerMap = new WeakMap<object, InlineEditController>();
 registerAction2(class extends Action2 {
 	constructor() {
 		super({
-			id: 'sidex.inlineEdit.activate',
-			title: nls.localize2('sidexInlineEdit', 'Sidex: Inline Edit'),
+			id: 'acpChat.inlineEdit.activate',
+			title: nls.localize2('acpChatInlineEdit', 'ACP Chat: Inline Edit'),
 			keybinding: {
 				primary: KeyMod.CtrlCmd | KeyCode.KeyK,
 				weight: KeybindingWeight.EditorContrib + 100,

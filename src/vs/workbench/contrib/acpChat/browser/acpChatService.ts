@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Sidex Chat Service — wraps the ACP store for the chat view.
+ *  ACP Chat Service — wraps the ACP store for the chat view.
  *  Handles agent lifecycle, model selection, and message streaming.
  *--------------------------------------------------------------------------------------------*/
 
@@ -12,9 +12,9 @@ import type { AcpNotification } from './acp-utils.js';
 
 // ─── Service interface ─────────────────────────────────────────────────────
 
-export const ISidexChatService = createDecorator<ISidexChatService>('sidexChatService');
+export const IAcpChatService = createDecorator<IAcpChatService>('acpChatService');
 
-export interface ISidexChatService {
+export interface IAcpChatService {
 	readonly _serviceBrand: undefined;
 
 	// Connection state
@@ -48,7 +48,7 @@ export interface ISidexChatService {
 
 // ─── Implementation ────────────────────────────────────────────────────────
 
-class SidexChatServiceImpl implements ISidexChatService {
+class AcpChatServiceImpl implements IAcpChatService {
 	declare readonly _serviceBrand: undefined;
 
 	private _store = new AcpStore();
@@ -115,12 +115,12 @@ class SidexChatServiceImpl implements ISidexChatService {
 			} catch (e) {
 				lastError = e;
 				if (attempt < 2) {
-					console.warn(`[sidexChatService] connect attempt ${attempt + 1} failed, retrying in 2s...`);
+					console.warn(`[acpChatService] connect attempt ${attempt + 1} failed, retrying in 2s...`);
 					await new Promise(r => setTimeout(r, 2000));
 				}
 			}
 		}
-		console.error('[sidexChatService] connect failed after 3 attempts:', lastError);
+		console.error('[acpChatService] connect failed after 3 attempts:', lastError);
 	}
 
 	sendMessage(text: string): void {
@@ -160,4 +160,4 @@ class SidexChatServiceImpl implements ISidexChatService {
 	}
 }
 
-registerSingleton(ISidexChatService, SidexChatServiceImpl, InstantiationType.Delayed);
+registerSingleton(IAcpChatService, AcpChatServiceImpl, InstantiationType.Delayed);

@@ -59,9 +59,9 @@ export class InlineEditController extends Disposable {
 		this._diffDecorations = this._editor.deltaDecorations(this._diffDecorations, [{
 			range: selection,
 			options: {
-				className: 'sidex-inline-edit-selection',
+				className: 'acp-inline-edit-selection',
 				isWholeLine: false,
-				description: 'sidex-inline-edit-selection',
+				description: 'acp-inline-edit-selection',
 			},
 		}]);
 
@@ -106,7 +106,7 @@ export class InlineEditController extends Disposable {
 			this._showInlineDiff(model);
 		} catch (err) {
 			this._inputWidget.setLoading(false);
-			console.error('[Sidex InlineEdit] Error:', err);
+			console.error('[ACP Chat InlineEdit] Error:', err);
 		}
 	}
 
@@ -115,7 +115,7 @@ export class InlineEditController extends Disposable {
 		body: { instruction: string; code: string; language: string; file_path: string },
 	): Promise<string> {
 		const httpUrl = serverUrl.replace(/^ws/, 'http');
-		const model = this._configService.getValue<string>('sidex.selectedModel') || '';
+		const model = this._configService.getValue<string>('acpChat.selectedModel') || '';
 
 		const resp = await fetch(`${httpUrl}/v1/inline-edit`, {
 			method: 'POST',
@@ -188,10 +188,10 @@ export class InlineEditController extends Disposable {
 					decorations.push({
 						range: new Range(lineNo, 1, lineNo, model.getLineMaxColumn(lineNo)),
 						options: {
-							className: 'sidex-inline-diff-removed',
+							className: 'acp-inline-diff-removed',
 							isWholeLine: true,
-							glyphMarginClassName: 'sidex-inline-diff-glyph-removed',
-							description: 'sidex-inline-diff-removed',
+							glyphMarginClassName: 'acp-inline-diff-glyph-removed',
+							description: 'acp-inline-diff-removed',
 						},
 					});
 				}
@@ -203,13 +203,13 @@ export class InlineEditController extends Disposable {
 				decorations.push({
 					range: new Range(insertLine, 1, insertLine, 1),
 					options: {
-						className: 'sidex-inline-diff-added',
+						className: 'acp-inline-diff-added',
 						isWholeLine: false,
 						after: {
 							content: ' + ' + line.content,
-							inlineClassName: 'sidex-inline-diff-added-text',
+							inlineClassName: 'acp-inline-diff-added-text',
 						},
-						description: 'sidex-inline-diff-added',
+						description: 'acp-inline-diff-added',
 					},
 				});
 				newLineOffset++;
@@ -230,16 +230,16 @@ export class InlineEditController extends Disposable {
 		this._removeActionWidget();
 
 		const widget = document.createElement('div');
-		widget.className = 'sidex-inline-edit-actions';
+		widget.className = 'acp-inline-edit-actions';
 
 		const acceptBtn = document.createElement('button');
-		acceptBtn.className = 'sidex-inline-edit-accept';
+		acceptBtn.className = 'acp-inline-edit-accept';
 		acceptBtn.textContent = 'Accept';
 		acceptBtn.title = 'Accept edit (Enter)';
 		acceptBtn.addEventListener('click', () => this.accept());
 
 		const rejectBtn = document.createElement('button');
-		rejectBtn.className = 'sidex-inline-edit-reject';
+		rejectBtn.className = 'acp-inline-edit-reject';
 		rejectBtn.textContent = 'Reject';
 		rejectBtn.title = 'Reject edit (Escape)';
 		rejectBtn.addEventListener('click', () => this.reject());
@@ -283,7 +283,7 @@ export class InlineEditController extends Disposable {
 		}
 
 		// Apply the edit
-		this._editor.executeEdits('sidex.inlineEdit', [{
+		this._editor.executeEdits('acpChat.inlineEdit', [{
 			range: this._editRange,
 			text: this._editedCode,
 		}]);
@@ -323,7 +323,7 @@ export class InlineEditController extends Disposable {
 	}
 
 	private _getServerUrl(): string {
-		return this._configService.getValue<string>('sidex.chat.serverUrl') || 'ws://54.196.180.169';
+		return this._configService.getValue<string>('acpChat.chat.serverUrl') || 'ws://54.196.180.169';
 	}
 
 	override dispose(): void {

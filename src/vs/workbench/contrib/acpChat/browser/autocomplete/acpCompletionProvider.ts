@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Sidex Inline Completion Provider — Ghost text autocomplete powered by Haiku
+ *  ACP Chat Inline Completion Provider — Ghost text autocomplete powered by Haiku
  *--------------------------------------------------------------------------------------------*/
 
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
@@ -18,7 +18,7 @@ const PREFIX_CHARS = 2000;
 const SUFFIX_CHARS = 500;
 const MIN_PREFIX_LENGTH = 8;
 
-export class SidexCompletionProvider implements InlineCompletionsProvider {
+export class AcpCompletionProvider implements InlineCompletionsProvider {
 	private _debounceTimer: ReturnType<typeof setTimeout> | undefined;
 	private _lastController: AbortController | null = null;
 
@@ -27,7 +27,7 @@ export class SidexCompletionProvider implements InlineCompletionsProvider {
 	) { }
 
 	private get _serverUrl(): string {
-		const wsUrl = this._configService.getValue<string>('sidex.chat.serverUrl') || 'ws://54.196.180.169';
+		const wsUrl = this._configService.getValue<string>('acpChat.chat.serverUrl') || 'ws://54.196.180.169';
 		return wsUrl.replace(/^ws/, 'http');
 	}
 

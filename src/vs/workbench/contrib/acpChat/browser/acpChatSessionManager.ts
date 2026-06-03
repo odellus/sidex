@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  SidexChatSessionManager — Global singleton that manages AcpStore instances
+ *  AcpChatSessionManager — Global singleton that manages AcpStore instances
  *  across editor tab switches. Each session ID maps to a persistent store
  *  that survives EditorPane lifecycle events (setInput/clearInput).
  *
@@ -15,14 +15,14 @@ interface ManagedSession {
 	lastAccessed: number;
 }
 
-export class SidexChatSessionManager implements IDisposable {
-	private static _instance: SidexChatSessionManager;
+export class AcpChatSessionManager implements IDisposable {
+	private static _instance: AcpChatSessionManager;
 	private _sessions = new Map<string, ManagedSession>();
 	private _cleanupInterval: ReturnType<typeof setInterval>;
 
-	static getInstance(): SidexChatSessionManager {
+	static getInstance(): AcpChatSessionManager {
 		if (!this._instance) {
-			this._instance = new SidexChatSessionManager();
+			this._instance = new AcpChatSessionManager();
 		}
 		return this._instance;
 	}
@@ -77,6 +77,6 @@ export class SidexChatSessionManager implements IDisposable {
 			session.store.dispose();
 		}
 		this._sessions.clear();
-		SidexChatSessionManager._instance = undefined as any;
+		AcpChatSessionManager._instance = undefined as any;
 	}
 }

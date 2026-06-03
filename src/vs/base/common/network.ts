@@ -92,8 +92,8 @@ export namespace Schemas {
 	/** Scheme used for local chat session content */
 	export const vscodeLocalChatSession = 'vscode-chat-session';
 
-	/** Scheme used for Sidex Chat editor tabs (multi-session). */
-	export const sidexChat = 'sidex-chat';
+	/** Scheme used for ACP Chat editor tabs (multi-session). */
+	export const acpChat = 'acp-chat';
 
 	/**
 	 * Scheme used internally for webviews that aren't linked to a resource (i.e. not custom editors)

@@ -1,7 +1,7 @@
 /*---------------------------------------------------------------------------------------------
- *  SidexChatEditorInput — represents a single chat session as an editor tab.
+ *  AcpChatEditorInput — represents a single chat session as an editor tab.
  *  Each input holds a URI encoding the session ID and delegates rendering
- *  to SidexChatEditor (the EditorPane).
+ *  to AcpChatEditor (the EditorPane).
  *--------------------------------------------------------------------------------------------*/
 
 import { URI } from '../../../../base/common/uri.js';
@@ -9,13 +9,13 @@ import { EditorInput, IEditorCloseHandler } from '../../../common/editor/editorI
 import { EditorInputCapabilities, IEditorIdentifier, IUntypedEditorInput } from '../../../common/editor.js';
 import { isEqual } from '../../../../base/common/resources.js';
 import { ConfirmResult } from '../../../../platform/dialogs/common/dialogs.js';
-import { SidexChatUri } from './sidexChatUri.js';
+import { AcpChatUri } from './acpChatUri.js';
 
-export const sidexChatEditorId = 'workbench.editor.sidexChat';
+export const acpChatEditorId = 'workbench.editor.acpChat';
 
-export class SidexChatEditorInput extends EditorInput implements IEditorCloseHandler {
+export class AcpChatEditorInput extends EditorInput implements IEditorCloseHandler {
 
-	static readonly ID = 'workbench.editors.sidexChat';
+	static readonly ID = 'workbench.editors.acpChat';
 
 	override readonly closeHandler = this;
 
@@ -26,11 +26,11 @@ export class SidexChatEditorInput extends EditorInput implements IEditorCloseHan
 	}
 
 	override get typeId(): string {
-		return SidexChatEditorInput.ID;
+		return AcpChatEditorInput.ID;
 	}
 
 	override get editorId(): string | undefined {
-		return sidexChatEditorId;
+		return acpChatEditorId;
 	}
 
 	override get capabilities(): EditorInputCapabilities {
@@ -39,7 +39,7 @@ export class SidexChatEditorInput extends EditorInput implements IEditorCloseHan
 
 	/** Session ID parsed from the resource URI. */
 	get sessionId(): string | undefined {
-		return SidexChatUri.parseSessionId(this.resource);
+		return AcpChatUri.parseSessionId(this.resource);
 	}
 
 	override getName(): string {
@@ -47,9 +47,9 @@ export class SidexChatEditorInput extends EditorInput implements IEditorCloseHan
 		if (id) {
 			// Use the random suffix (after the timestamp) for a short, unique name
 			const suffix = id.split('-').pop();
-			return `Sidex Chat — #${suffix}`;
+			return `ACP Chat — #${suffix}`;
 		}
-		return 'Sidex Chat';
+		return 'ACP Chat';
 	}
 
 	override getDescription(): string | undefined {
@@ -57,7 +57,7 @@ export class SidexChatEditorInput extends EditorInput implements IEditorCloseHan
 	}
 
 	override matches(otherInput: EditorInput | IUntypedEditorInput): boolean {
-		if (otherInput instanceof SidexChatEditorInput) {
+		if (otherInput instanceof AcpChatEditorInput) {
 			return isEqual(this.resource, otherInput.resource);
 		}
 		return super.matches(otherInput);
@@ -71,7 +71,7 @@ export class SidexChatEditorInput extends EditorInput implements IEditorCloseHan
 		return {
 			resource: this.resource,
 			options: {
-				override: sidexChatEditorId,
+				override: acpChatEditorId,
 				pinned: true,
 			},
 		};

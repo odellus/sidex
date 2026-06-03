@@ -215,7 +215,7 @@ import './contrib/search/browser/searchView.js';
 import './contrib/searchEditor/browser/searchEditor.contribution.js';
 
 // Sidex Chat
-import './contrib/sidexChat/browser/sidexChat.contribution.js';
+import './contrib/acpChat/browser/acpChat.contribution.js';
 
 // Sash
 import './contrib/sash/browser/sash.contribution.js';
