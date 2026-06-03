@@ -2,13 +2,16 @@
 
 
 == ACP Chat specific
-+ Get rid of echo of user message and improper formatting of user response
-+ Proper syntax highlighting for typst (WYSIWYG?) and good @ context mechanism in the rich text editor. Enable scroll wheel. Resizing. Change the default color of the text to same white as text in chat.
++ #strike[Get rid of echo of user message and improper formatting of user response]
++ #strike[Change the default color of the text in rich text editor to same white as text in monaco editor. It's dark enough. Just use white text everywhere in the chat, including in the rendered chat. text is far far too dark everywhere in chat.]
++ Model selection in chat
++ Enable scroll wheel in rich text editor. 
++ Resizing rich text editor. 
++ Proper syntax highlighting for typst (WYSIWYG?) and good @ context mechanism in the rich text editor. 
 + Pull thinking tokens out of the weird scrollable box they're in and enable syntax highlighting for their thoughts
 + Add diff fixtures for edit and write
 + Add terminal fixture that is a "real terminal" in other words xterm.js
 + Make all text in chat brighter. it's a dark theme. can barely see text right now. too muted. 
-+ Model selection in chat
 + TOOLS! Client side tools that do orchestration stuff. Cool orchestration tasks like 
   - list_sessions — list all the active sessions open in editor
   - send — send a message to another user. hooked up to state to say who it called so called agent replies back after react loop to execute task with a tool-less, RESTful summary

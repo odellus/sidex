@@ -37,9 +37,70 @@
 	min-height: 0; /* allow shrinking in flex parent — critical for scroll chain */
 	overflow: hidden;
 	background: var(--vscode-sideBar-background);
-	color: var(--vscode-foreground);
+	color: #ffffff;
 	font-family: var(--vscode-font-family);
 	font-size: 13px;
+}
+
+/* Links need their theme color */
+.acp-chat-view a {
+	color: var(--vscode-textLink-foreground);
+}
+
+.acp-chat-view a:hover {
+	color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+}
+
+/* Tool status indicators */
+.acp-chat-view .sc-tool-status.running {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.acp-chat-view .sc-tool-status.done {
+	color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen));
+}
+
+.acp-chat-view .sc-tool-status.error {
+	color: var(--vscode-errorForeground);
+}
+
+/* Diff markers */
+.acp-chat-view .sc-diff-line.added .sc-diff-line-marker {
+	color: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-terminal-ansiGreen));
+}
+
+.acp-chat-view .sc-diff-line.removed .sc-diff-line-marker {
+	color: var(--vscode-gitDecoration-deletedResourceForeground, var(--vscode-terminal-ansiRed));
+}
+
+/* Brief banner warning */
+.acp-chat-view .sc-brief-banner {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+/* Permission dialog warning icon */
+.acp-chat-view .sc-permission-icon {
+	color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+/* Input text should be white for better contrast (overrides theme's input.foreground) */
+.acp-chat-view .sc-textarea {
+	color: #ffffff !important;
+}
+
+/* Placeholder text */
+.acp-chat-view .sc-textarea::placeholder {
+	color: var(--vscode-input-placeholderForeground);
+}
+
+/* Mention pills use badge colors for contrast */
+.acp-chat-view .sc-mention-pill {
+	color: var(--vscode-badge-foreground);
+}
+
+/* Buttons with specific backgrounds need their own foreground */
+.acp-chat-view .sc-permission-allow {
+	color: var(--vscode-button-foreground);
 }
 
 /* ===== Header (right-aligned action buttons only) ===== */
@@ -1653,4 +1714,10 @@
 
 .acp-inline-edit-reject:hover {
 	background: var(--vscode-list-hoverBackground);
+}
+
+/* ===== White Text Override (must be last to win cascade) ===== */
+/* Force white text on all chat elements, overriding theme variables */
+.acp-chat-view * {
+	color: inherit;
 }
