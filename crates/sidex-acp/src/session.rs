@@ -133,6 +133,8 @@ pub struct AcpSession {
     pub agent_id: String,
     pub agent_name: String,
     pub cwd: String,
+    /// Agent config used to spawn this session (for re-spawn on session switch).
+    pub agent_config: AgentConfig,
     config_options: parking_lot::Mutex<Option<Vec<SessionConfigOption>>>,
     modes: parking_lot::Mutex<Option<SessionModeState>>,
 
@@ -245,6 +247,7 @@ impl AcpSession {
             agent_id: agent_id.clone(),
             agent_name: config.name.clone(),
             cwd: cwd.clone(),
+            agent_config: config,
             config_options: parking_lot::Mutex::new(None),
             modes: parking_lot::Mutex::new(None),
             stdin_tx,

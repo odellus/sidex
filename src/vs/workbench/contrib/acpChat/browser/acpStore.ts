@@ -290,15 +290,19 @@ export class AcpStore {
 	async listSessions(cwd: string): Promise<{ id: string; title: string; date: number }[]> {
 		if (!this._sessionId) { return []; }
 		try {
-			const result = await invoke<{ sessions?: { id: string; title?: string; updatedAt?: string }[] }>('acp_chat_list_sessions', {
+			const result = await invoke<{ sessions?: { sessionId: string; title?: string; updatedAt?: string }[] }>('acp_chat_list_sessions', {
 				request: { session_id: this._sessionId, cwd },
 			});
-			return (result.sessions || []).map((s: { id: string; title?: string; updatedAt?: string }) => ({
-				id: s.id,
-				title: s.title || s.id.slice(0, 8),
+			console.log('[acpStore] listSessions raw result:', JSON.stringify(result));
+			const sessions = (result.sessions || []).map((s: { sessionId: string; title?: string; updatedAt?: string }) => ({
+				id: s.sessionId,
+				title: s.title || s.sessionId.slice(0, 8),
 				date: s.updatedAt ? new Date(s.updatedAt).getTime() : Date.now(),
 			}));
-		} catch {
+			console.log('[acpStore] listSessions mapped:', JSON.stringify(sessions));
+			return sessions;
+		} catch (e) {
+			console.error('[acpStore] listSessions failed:', e);
 			return [];
 		}
 	}
@@ -309,21 +313,37 @@ export class AcpStore {
 			return;
 		}
 
-		const resp = await invoke<{ session_id: string; config_options?: SessionConfigOption[] }>('acp_chat_switch_session', {
-			request: {
-				current_session_id: this._sessionId,
-				target_session_id: sessionId,
-				cwd: this._cwd,
-				mcp_servers: [],
-			},
-		});
+		console.log('[acpStore] loadSession: switching from', this._sessionId, 'to', sessionId);
 
-		this._notifications = [];
-		this._sessionId = resp.session_id;
-		this._configOptions = resp.config_options || [];
-		this._onDidChangeConfigOptions.fire(this._configOptions);
-		this._onDidChangeNotifications.fire();
+		// Show loading state
+		this._connectionStatus = 'connecting';
 		this._onDidChangeConnectionState.fire();
+
+		try {
+			const resp = await invoke<{ session_id: string; config_options?: SessionConfigOption[] }>('acp_chat_switch_session', {
+				request: {
+					current_session_id: this._sessionId,
+					target_session_id: sessionId,
+					cwd: this._cwd,
+					mcp_servers: [],
+				},
+			});
+
+			console.log('[acpStore] loadSession: switch succeeded, new session_id:', resp.session_id);
+
+			this._notifications = [];
+			this._sessionId = resp.session_id;
+			this._configOptions = resp.config_options || [];
+			this._connectionStatus = 'ready';
+			this._onDidChangeConfigOptions.fire(this._configOptions);
+			this._onDidChangeNotifications.fire();
+			this._onDidChangeConnectionState.fire();
+		} catch (e) {
+			console.error('[acpStore] loadSession failed:', e);
+			this._connectionStatus = 'ready';
+			this._onDidChangeConnectionState.fire();
+			throw e;
+		}
 	}
 
 	async setConfigOption(configId: string, value: string): Promise<void> {

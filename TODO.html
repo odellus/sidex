@@ -8,24 +8,20 @@
     <h2>TO DO</h2>
     <h3>ACP Chat specific</h3>
     <ol>
-      <li>
-        <p><s>Get rid of echo of user message and improper formatting of user response</s></p>
-      </li>
-      <li>
-        <p>Enable scroll wheel in rich text editor.</p>
-      </li>
-      <li>
-        <p>Resizing rich text editor.</p>
-      </li>
-      <li>
-        <p>Change the default color of the text in rich text editor to same white as text in chat.</p>
-      </li>
-      <li>
-        <p>Proper syntax highlighting for typst (WYSIWYG?) and good @ context mechanism in the rich text editor.</p>
-      </li>
-      <li>
-        <p>Pull thinking tokens out of the weird scrollable box they’re in and enable syntax highlighting for their thoughts</p>
-      </li>
+      <li><s>Get rid of echo of user message and improper formatting of user response</s></li>
+      <li><s>Change the default color of the text in rich text editor to same white as text in monaco editor. It’s dark enough. Just use white text everywhere in the chat, including in the rendered chat. text is far far too dark everywhere in chat.</s></li>
+      <li><s>Model selection in chat</s></li>
+      <li><s>Make all text in chat brighter. it’s a dark theme. can barely see text right now. too muted.</s></li>
+      <li>Pull thinking tokens out of the weird scrollable box they’re in and enable syntax highlighting for their thoughts</li>
+    </ol>
+    <h4>Rich Text Editor</h4>
+    <ol>
+      <li>Enable scroll wheel in rich text editor.</li>
+      <li>Resizing rich text editor.</li>
+      <li>Proper syntax highlighting for typst (WYSIWYG?) and good @ context mechanism in the rich text editor.</li>
+    </ol>
+    <h4>Tools</h4>
+    <ol>
       <li>
         <p>Add diff fixtures for edit and write</p>
       </li>
@@ -33,13 +29,7 @@
         <p>Add terminal fixture that is a “real terminal” in other words xterm.js</p>
       </li>
       <li>
-        <p>Make all text in chat brighter. it’s a dark theme. can barely see text right now. too muted.</p>
-      </li>
-      <li>
-        <p>Model selection in chat</p>
-      </li>
-      <li>
-        <p>TOOLS! Client side tools that do orchestration stuff. Cool orchestration tasks like</p>
+        <p>Client side tools that do orchestration stuff. Cool orchestration tasks like</p>
         <ul>
           <li>list_sessions — list all the active sessions open in editor</li>
           <li>send — send a message to another user. hooked up to state to say who it called so called agent replies back after react loop to execute task with a tool-less, RESTful summary</li>

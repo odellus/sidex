@@ -113,30 +113,54 @@ impl AcpSessionManager {
         Ok(session)
     }
 
-    /// Load a different session on an already-bound session.
-    /// Updates the session_id and the sessions map key.
+    /// Switch to a different session by killing the old agent and spawning a fresh one.
+    /// session/load on an existing connection causes the agent to cancel subsequent prompts,
+    /// so we spawn a new agent process and load the session on the fresh connection.
     pub async fn switch_session(
         &self,
         current_session_id: &str,
         target_session_id: &str,
         cwd: &str,
         mcp_servers: Vec<Value>,
+        forward_tx: broadcast::Sender<SessionEvent>,
     ) -> Result<Arc<AcpSession>> {
-        let session = {
+        // 1. Get old session config before killing it
+        let old_session = {
             let mut sessions = self.sessions.lock().await;
             sessions.remove(current_session_id).ok_or_else(|| {
                 anyhow::anyhow!("Session not found: {}", current_session_id)
             })?
         };
+        let agent_config = old_session.agent_config.clone();
 
-        session.load_session(target_session_id, cwd, mcp_servers).await?;
-        let new_session_id = session.session_id();
+        // 2. Kill old agent process
+        info!("Switching session: killing old agent {}", old_session.agent_id);
+        self.agent_manager.kill(&old_session.agent_id).await;
 
-        self.sessions
-            .lock()
-            .await
-            .insert(new_session_id, session.clone());
-        Ok(session)
+        // 3. Spawn fresh agent + initialize
+        let shell_env = self.agent_manager.shell_env().await;
+        let new_session = AcpSession::spawn(&self.agent_manager, agent_config, cwd.to_string(), shell_env).await?;
+        new_session.initialize().await?;
+
+        // 4. Load the target session on the fresh connection
+        new_session.load_session(target_session_id, cwd, mcp_servers).await?;
+        let new_session_id = new_session.session_id();
+
+        // 5. Set up event forwarding
+        let mut rx = new_session.subscribe();
+        let sid = new_session_id.clone();
+        tokio::spawn(async move {
+            while let Ok(event) = rx.recv().await {
+                let _ = forward_tx.send(event);
+            }
+            let _ = forward_tx.send(SessionEvent::Disconnected {
+                session_id: sid.clone(),
+            });
+        });
+
+        info!("Session switched: {} → {}", current_session_id, new_session_id);
+        self.sessions.lock().await.insert(new_session_id, new_session.clone());
+        Ok(new_session)
     }
 
     /// List sessions via an unbound or bound connection.

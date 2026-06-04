@@ -253,6 +253,8 @@ pub async fn acp_chat_switch_session(
     state: State<'_, Arc<AcpChatState>>,
     request: SwitchSessionRequest,
 ) -> Result<NewSessionResponse, String> {
+    state.ensure_bridge();
+
     let session = state
         .session_manager
         .switch_session(
@@ -260,6 +262,7 @@ pub async fn acp_chat_switch_session(
             &request.target_session_id,
             &request.cwd,
             request.mcp_servers,
+            state.global_events.clone(),
         )
         .await
         .map_err(|e| {

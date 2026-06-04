@@ -103,3 +103,4 @@ extensions-meta.json
 public/builtin-extensions.js
 
 research
+.playwright-mcp

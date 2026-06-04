@@ -237,7 +237,9 @@ export class AcpChatEditor extends EditorPane {
 		);
 		this._sessionDisposables.add(
 			this._header.onSelectSession(sessionId => {
-				store.loadSession(sessionId);
+				store.loadSession(sessionId).catch(e => {
+					console.error('[acpChatEditor] loadSession failed:', e);
+				});
 			})
 		);
 		this._sessionDisposables.add(

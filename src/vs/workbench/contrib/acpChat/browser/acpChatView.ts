@@ -40,6 +40,7 @@ export class AcpChatViewPane extends ViewPane {
 	private _sentinelEl!: HTMLElement;
 	private _scrollManager!: ScrollManager;
 	private _input!: ChatInput;
+	private _connectingBar!: HTMLElement;
 	private readonly _viewDisposables = this._register(new DisposableStore());
 
 	// Group-based rendering state
@@ -71,6 +72,12 @@ export class AcpChatViewPane extends ViewPane {
 		this._header = new ChatHeader();
 		this._header.appendTo(parent);
 		this._viewDisposables.add(this._header);
+
+		// Connecting status bar — shown between header and messages during session switches
+		this._connectingBar = DOM.append(parent, DOM.$('div.sc-connecting-bar'));
+		DOM.append(this._connectingBar, DOM.$('div.sc-connecting-dot'));
+		const connectingText = DOM.append(this._connectingBar, DOM.$('span'));
+		connectingText.textContent = 'Switching session…';
 
 		this._messagesEl = DOM.append(parent, $('div.sc-messages'));
 		this._welcomeEl = DOM.append(this._messagesEl, $('div.sc-welcome'));
@@ -108,7 +115,10 @@ export class AcpChatViewPane extends ViewPane {
 		}));
 
 		this._viewDisposables.add(this._header.onSelectSession(sessionId => {
-			this.chatService.loadSession(sessionId);
+			console.log('[acpChatView] onSelectSession fired with:', sessionId);
+			this.chatService.loadSession(sessionId).catch(e => {
+				console.error('[acpChatView] loadSession failed:', e);
+			});
 		}));
 
 		this._viewDisposables.add(this._header.onMenuAction(action => {
@@ -130,8 +140,14 @@ export class AcpChatViewPane extends ViewPane {
 		}));
 
 		this._viewDisposables.add(this.chatService.onDidChangeConnectionState(() => {
-			if (this.chatService.connectionState === 'connected' || this.chatService.connectionState === 'ready') {
+			const state = this.chatService.connectionState;
+			if (state === 'connected' || state === 'ready') {
+				this._connectingBar.classList.remove('visible');
 				this._fetchSessions();
+			} else if (state === 'connecting') {
+				this._connectingBar.classList.add('visible');
+			} else {
+				this._connectingBar.classList.remove('visible');
 			}
 		}));
 
@@ -273,13 +289,18 @@ export class AcpChatViewPane extends ViewPane {
 		this._input?.focus();
 	}
 
-	private _fetchSessions(): void {
-		const sessions = this.chatService.getSavedSessions();
-		this._header.setSessions(sessions.map(s => ({
-			id: s.id,
-			title: s.title,
-			updated_at: new Date(s.date).toISOString(),
-		})));
+	private async _fetchSessions(): Promise<void> {
+		try {
+			const sessions = await this.chatService.getSavedSessions();
+			this._header.setSessions(sessions.map(s => ({
+				id: s.id,
+				title: s.title,
+				updated_at: new Date(s.date).toISOString(),
+			})));
+		} catch (e) {
+			console.warn('[acpChatView] fetchSessions failed:', e);
+			this._header.setSessions([]);
+		}
 	}
 
 	private _openInEditor(): void {

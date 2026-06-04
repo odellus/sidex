@@ -44,11 +44,11 @@ export interface IAcpChatService {
 	stopStreaming(): void;
 	setMode(mode: string): void;
 	clearMessages(): void;
-	loadSession(sessionId: string): void;
+	loadSession(sessionId: string): Promise<void>;
 	setSelectedModel(modelId: string): void;
 	setConfigOption(configId: string, value: string): Promise<void>;
 	respondToPermission(toolCallId: string, approved: boolean): void;
-	getSavedSessions(): Array<{ id: string; title: string; date: number }>;
+	getSavedSessions(): Promise<Array<{ id: string; title: string; date: number }>>;
 }
 
 // ─── Implementation ────────────────────────────────────────────────────────
@@ -152,9 +152,8 @@ class AcpChatServiceImpl implements IAcpChatService {
 		this._store.clearMessages();
 	}
 
-	loadSession(_sessionId: string): void {
-		// For now: close current and reopen
-		// Full session/load will come later
+	async loadSession(sessionId: string): Promise<void> {
+		await this._store.loadSession(sessionId);
 	}
 
 	setSelectedModel(modelId: string): void {
@@ -170,9 +169,10 @@ class AcpChatServiceImpl implements IAcpChatService {
 		// For now, auto-approve is done on the backend
 	}
 
-	getSavedSessions(): Array<{ id: string; title: string; date: number }> {
-		// Sessions are managed by the agent — query async
-		return [];
+	async getSavedSessions(): Promise<Array<{ id: string; title: string; date: number }>> {
+		const workspace = this._workspaceContext.getWorkspace();
+		const cwd = workspace.folders[0]?.uri?.fsPath || '/home';
+		return this._store.listSessions(cwd);
 	}
 }
 
