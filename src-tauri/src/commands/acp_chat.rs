@@ -122,6 +122,7 @@ pub struct NewSessionRequest {
 #[derive(Debug, Serialize)]
 pub struct NewSessionResponse {
     pub session_id: String,
+    pub config_options: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -193,6 +194,7 @@ pub async fn acp_chat_new_session(
 
     Ok(NewSessionResponse {
         session_id: session.session_id(),
+        config_options: session.config_options(),
     })
 }
 
@@ -231,6 +233,7 @@ pub async fn acp_chat_load_session(
 
     Ok(NewSessionResponse {
         session_id: session.session_id(),
+        config_options: session.config_options(),
     })
 }
 
@@ -266,6 +269,7 @@ pub async fn acp_chat_switch_session(
 
     Ok(NewSessionResponse {
         session_id: session.session_id(),
+        config_options: session.config_options(),
     })
 }
 
@@ -340,6 +344,34 @@ pub async fn acp_chat_list_sessions(
         log::error!("[acp_chat] list_sessions failed: {e}");
         e.to_string()
     })
+}
+
+/// Set a session configuration option (model, mode, etc.).
+#[derive(Debug, Deserialize)]
+pub struct SetConfigOptionRequest {
+    pub session_id: String,
+    pub config_id: String,
+    pub value: String,
+}
+
+#[tauri::command]
+pub async fn acp_chat_set_config_option(
+    state: State<'_, Arc<AcpChatState>>,
+    request: SetConfigOptionRequest,
+) -> Result<Value, String> {
+    let session = state
+        .session_manager
+        .get_session(&request.session_id)
+        .await
+        .ok_or("Session not found")?;
+
+    session
+        .set_config_option(&request.config_id, &request.value)
+        .await
+        .map_err(|e| {
+            log::error!("[acp_chat] set_config_option failed: {e}");
+            e.to_string()
+        })
 }
 
 

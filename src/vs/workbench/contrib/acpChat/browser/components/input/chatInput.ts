@@ -123,6 +123,10 @@ export class ChatInput extends Component {
 				modelMenu.classList.remove('visible');
 			}
 		});
+		// Prevent scroll wheel from closing the menu
+		this.on(modelMenu, 'wheel', (e) => {
+			e.stopPropagation();
+		});
 
 		// Attach button — folder icon
 		const attachBtn = DOM.append(right, $('button.sc-input-icon-btn'));

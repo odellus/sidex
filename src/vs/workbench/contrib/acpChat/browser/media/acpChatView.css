@@ -785,16 +785,36 @@
 	left: 100px;
 	margin-bottom: 4px;
 	min-width: 220px;
+	max-height: 300px;
+	overflow-y: auto;
 	background: var(--vscode-menu-background, var(--vscode-dropdown-background));
 	border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
 	border-radius: 6px;
 	padding: 4px;
 	box-shadow: 0 4px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.16));
 	z-index: 100;
+	pointer-events: auto;
 }
 
 .sc-model-menu.visible {
 	display: block;
+}
+
+.sc-model-menu::-webkit-scrollbar {
+	width: 8px;
+}
+
+.sc-model-menu::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.sc-model-menu::-webkit-scrollbar-thumb {
+	background: var(--vscode-scrollbarSlider-background);
+	border-radius: 4px;
+}
+
+.sc-model-menu::-webkit-scrollbar-thumb:hover {
+	background: var(--vscode-scrollbarSlider-hoverBackground);
 }
 
 .sc-model-menu-item {

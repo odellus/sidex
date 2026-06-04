@@ -269,6 +269,31 @@ export class AcpChatEditor extends EditorPane {
 			})
 		);
 		this._sessionDisposables.add(
+			store.onDidChangeConfigOptions(options => {
+				const modelConfig = options.find(opt => opt.category === 'model' || opt.id === 'model');
+				if (modelConfig && modelConfig.options) {
+					const models = modelConfig.options.map(opt => ({
+						id: opt.value,
+						name: opt.name
+					}));
+					this._chatInput.setAvailableModels(models);
+					if (modelConfig.currentValue) {
+						this._chatInput.setModel(modelConfig.currentValue);
+					}
+				}
+			})
+		);
+		this._sessionDisposables.add(
+			this._chatInput.onModelChange(modelId => {
+				const modelConfig = store.configOptions.find(
+					opt => opt.category === 'model' || opt.id === 'model'
+				);
+				if (modelConfig) {
+					store.setConfigOption(modelConfig.id, modelId);
+				}
+			})
+		);
+		this._sessionDisposables.add(
 			store.onDidReceiveControlSignal(signal => {
 				if (signal.type === 'brief' && signal.content) {
 					const text = signal.content.startsWith('BRIEF:') ? signal.content.slice(6) : signal.content;

@@ -67,6 +67,14 @@ export interface ControlSignal {
 
 // ─── Store ─────────────────────────────────────────────────────────────────
 
+export interface SessionConfigOption {
+	id: string;
+	name: string;
+	category?: string;
+	currentValue?: string;
+	options: Array<{ name: string; value: string; description?: string }>;
+}
+
 export class AcpStore {
 	private _connectionId: string = '';
 	private _sessionId: string = '';
@@ -77,6 +85,7 @@ export class AcpStore {
 	private _notifications: AcpNotification[] = [];
 	private _isStreaming: boolean = false;
 	private _queuedItems: QueuedItem[] = [];
+	private _configOptions: SessionConfigOption[] = [];
 
 	private readonly _onDidChangeNotifications = this._registerEmitter<void>();
 	readonly onDidChangeNotifications: Event<void> = this._onDidChangeNotifications.event;
@@ -89,6 +98,9 @@ export class AcpStore {
 
 	private readonly _onDidReceiveControlSignal = this._registerEmitter<ControlSignal>();
 	readonly onDidReceiveControlSignal: Event<ControlSignal> = this._onDidReceiveControlSignal.event;
+
+	private readonly _onDidChangeConfigOptions = this._registerEmitter<SessionConfigOption[]>();
+	readonly onDidChangeConfigOptions: Event<SessionConfigOption[]> = this._onDidChangeConfigOptions.event;
 
 	private _unlisteners: (() => void)[] = [];
 	private _eventListenerStarted = false;
@@ -108,6 +120,7 @@ export class AcpStore {
 	get connectionId(): string { return this._connectionId; }
 	get cwd(): string { return this._cwd; }
 	get queuedItems(): QueuedItem[] { return this._queuedItems; }
+	get configOptions(): SessionConfigOption[] { return this._configOptions; }
 
 	// ─── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -171,7 +184,7 @@ export class AcpStore {
 			// If we have a previous session_id, try to load it
 			if (this._sessionId) {
 				try {
-					const loadResp = await invoke<{ session_id: string }>('acp_chat_load_session', {
+					const loadResp = await invoke<{ session_id: string; config_options?: SessionConfigOption[] }>('acp_chat_load_session', {
 						request: {
 							connection_id: this._connectionId,
 							session_id: this._sessionId,
@@ -180,6 +193,8 @@ export class AcpStore {
 						},
 					});
 					this._sessionId = loadResp.session_id;
+					this._configOptions = loadResp.config_options || [];
+					this._onDidChangeConfigOptions.fire(this._configOptions);
 					this._connectionStatus = 'ready';
 					this._onDidChangeConnectionState.fire();
 					return;
@@ -190,13 +205,15 @@ export class AcpStore {
 			}
 
 			// Create a new session
-			const sessionResp = await invoke<{ session_id: string }>('acp_chat_new_session', {
+			const sessionResp = await invoke<{ session_id: string; config_options?: SessionConfigOption[] }>('acp_chat_new_session', {
 				request: {
 					connection_id: this._connectionId,
 					mcp_servers: [],
 				},
 			});
 			this._sessionId = sessionResp.session_id;
+			this._configOptions = sessionResp.config_options || [];
+			this._onDidChangeConfigOptions.fire(this._configOptions);
 			this._connectionStatus = 'ready';
 			this._onDidChangeConnectionState.fire();
 		} catch (e) {
@@ -288,30 +305,42 @@ export class AcpStore {
 
 	async loadSession(sessionId: string): Promise<void> {
 		if (!this._sessionId) {
-			// No active session — can't switch
 			console.warn('[acpStore] loadSession: no active session');
 			return;
 		}
 
-		try {
-			const resp = await invoke<{ session_id: string }>('acp_chat_switch_session', {
-				request: {
-					current_session_id: this._sessionId,
-					target_session_id: sessionId,
-					cwd: this._cwd,
-					mcp_servers: [],
-				},
-			});
+		const resp = await invoke<{ session_id: string; config_options?: SessionConfigOption[] }>('acp_chat_switch_session', {
+			request: {
+				current_session_id: this._sessionId,
+				target_session_id: sessionId,
+				cwd: this._cwd,
+				mcp_servers: [],
+			},
+		});
 
-			// Clear old notifications — the agent will replay the conversation
-			this._notifications = [];
-			this._sessionId = resp.session_id;
-			this._onDidChangeNotifications.fire();
-			this._onDidChangeConnectionState.fire();
-		} catch (e) {
-			console.error('[acpStore] loadSession failed:', e);
-			throw e;
+		this._notifications = [];
+		this._sessionId = resp.session_id;
+		this._configOptions = resp.config_options || [];
+		this._onDidChangeConfigOptions.fire(this._configOptions);
+		this._onDidChangeNotifications.fire();
+		this._onDidChangeConnectionState.fire();
+	}
+
+	async setConfigOption(configId: string, value: string): Promise<void> {
+		if (!this._sessionId) {
+			throw new Error('No active session');
 		}
+
+		const updated = await invoke<SessionConfigOption[]>('acp_chat_set_config_option', {
+			request: {
+				session_id: this._sessionId,
+				config_id: configId,
+				value: value,
+			},
+		});
+
+		this._configOptions = updated || [];
+		this._onDidChangeConfigOptions.fire(this._configOptions);
 	}
 
 	// ─── Internal event handling ───────────────────────────────────────────
@@ -379,6 +408,14 @@ export class AcpStore {
 				tool_name: toolName,
 				args,
 			});
+			return;
+		}
+
+		// Config option updates (control signal)
+		if (sessionUpdate === 'config_option_update') {
+			const configOptions = update.configOptions as SessionConfigOption[];
+			this._configOptions = configOptions || [];
+			this._onDidChangeConfigOptions.fire(this._configOptions);
 			return;
 		}
 

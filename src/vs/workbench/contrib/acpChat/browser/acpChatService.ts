@@ -7,7 +7,7 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { AcpStore, ConnectionStatus, PromptTurnState, ControlSignal } from './acpStore.js';
+import { AcpStore, ConnectionStatus, PromptTurnState, ControlSignal, SessionConfigOption } from './acpStore.js';
 import type { AcpNotification } from './acp-utils.js';
 
 // ─── Service interface ─────────────────────────────────────────────────────
@@ -24,6 +24,9 @@ export interface IAcpChatService {
 	readonly notifications: readonly AcpNotification[];
 	readonly isStreaming: boolean;
 
+	// Config options
+	readonly configOptions: SessionConfigOption[];
+
 	// Model info
 	readonly serverModel: string;
 
@@ -32,6 +35,7 @@ export interface IAcpChatService {
 	readonly onDidChangeStreaming: Event<boolean>;
 	readonly onDidChangeConnectionState: Event<void>;
 	readonly onDidChangeModels: Event<Array<{ id: string; name: string }>>;
+	readonly onDidChangeConfigOptions: Event<SessionConfigOption[]>;
 	readonly onDidReceiveControlSignal: Event<ControlSignal>;
 
 	// Actions
@@ -42,6 +46,7 @@ export interface IAcpChatService {
 	clearMessages(): void;
 	loadSession(sessionId: string): void;
 	setSelectedModel(modelId: string): void;
+	setConfigOption(configId: string, value: string): Promise<void>;
 	respondToPermission(toolCallId: string, approved: boolean): void;
 	getSavedSessions(): Array<{ id: string; title: string; date: number }>;
 }
@@ -66,12 +71,16 @@ class AcpChatServiceImpl implements IAcpChatService {
 	private readonly _onDidChangeModels = new Emitter<Array<{ id: string; name: string }>>();
 	readonly onDidChangeModels = this._onDidChangeModels.event;
 
+	private readonly _onDidChangeConfigOptions = new Emitter<SessionConfigOption[]>();
+	readonly onDidChangeConfigOptions = this._onDidChangeConfigOptions.event;
+
 	private readonly _onDidReceiveControlSignal = new Emitter<ControlSignal>();
 	readonly onDidReceiveControlSignal = this._onDidReceiveControlSignal.event;
 
 	get connectionState(): ConnectionStatus { return this._store.connectionStatus; }
 	get notifications(): readonly AcpNotification[] { return this._store.notifications; }
 	get isStreaming(): boolean { return this._store.isStreaming; }
+	get configOptions(): SessionConfigOption[] { return this._store.configOptions; }
 	get serverModel(): string { return this._model; }
 
 	constructor(
@@ -89,6 +98,9 @@ class AcpChatServiceImpl implements IAcpChatService {
 		});
 		this._store.onDidReceiveControlSignal(signal => {
 			this._onDidReceiveControlSignal.fire(signal);
+		});
+		this._store.onDidChangeConfigOptions(options => {
+			this._onDidChangeConfigOptions.fire(options);
 		});
 	}
 
@@ -147,6 +159,10 @@ class AcpChatServiceImpl implements IAcpChatService {
 
 	setSelectedModel(modelId: string): void {
 		this._model = modelId;
+	}
+
+	async setConfigOption(configId: string, value: string): Promise<void> {
+		await this._store.setConfigOption(configId, value);
 	}
 
 	respondToPermission(_toolCallId: string, _approved: boolean): void {

@@ -131,30 +131,32 @@ export class AcpChatViewPane extends ViewPane {
 
 		this._viewDisposables.add(this.chatService.onDidChangeConnectionState(() => {
 			if (this.chatService.connectionState === 'connected' || this.chatService.connectionState === 'ready') {
-				if (this.chatService.serverModel) {
-					this._input.setModel(this.chatService.serverModel);
-				}
 				this._fetchSessions();
 			}
 		}));
 
-		this._viewDisposables.add(this.chatService.onDidChangeModels(models => {
-			this._input.setAvailableModels(models);
-			// Show the current model and make it active in the dropdown
-			const currentModel = this.chatService.serverModel;
-			if (currentModel) {
-				this._input.setModel(currentModel);
+		this._viewDisposables.add(this.chatService.onDidChangeConfigOptions(options => {
+			const modelConfig = options.find(opt => opt.category === 'model' || opt.id === 'model');
+			if (modelConfig && modelConfig.options) {
+				const models = modelConfig.options.map(opt => ({
+					id: opt.value,
+					name: opt.name
+				}));
+				this._input.setAvailableModels(models);
+				if (modelConfig.currentValue) {
+					this._input.setModel(modelConfig.currentValue);
+				}
 			}
 		}));
 
 		this._viewDisposables.add(this._input.onModelChange(modelId => {
-			this.chatService.setSelectedModel(modelId);
+			const modelConfig = this.chatService.configOptions.find(
+				opt => opt.category === 'model' || opt.id === 'model'
+			);
+			if (modelConfig) {
+				this.chatService.setConfigOption(modelConfig.id, modelId);
+			}
 		}));
-
-		// Set model immediately from saved/default (before connection)
-		if (this.chatService.serverModel) {
-			this._input.setModel(this.chatService.serverModel);
-		}
 
 		this._viewDisposables.add(this.chatService.onDidReceiveControlSignal(signal => {
 			if (signal.type === 'brief' && signal.content) {
