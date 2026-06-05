@@ -22,15 +22,16 @@ jobs:
           - platform: linux-aarch64
             os: ubuntu-24.04-arm
             args: ""
-          - platform: macos-x86_64
-            os: macos-latest
-            args: "--target x86_64-apple-darwin"
-          - platform: macos-aarch64
-            os: macos-latest
-            args: "--target aarch64-apple-darwin"
-          - platform: windows-x86_64
-            os: windows-latest
-            args: ""
+          # macOS and Windows builds disabled for now
+          # - platform: macos-x86_64
+          #   os: macos-latest
+          #   args: "--target x86_64-apple-darwin"
+          # - platform: macos-aarch64
+          #   os: macos-latest
+          #   args: "--target aarch64-apple-darwin"
+          # - platform: windows-x86_64
+          #   os: windows-latest
+          #   args: ""
 
     steps:
       - name: Checkout

@@ -41,7 +41,8 @@
 + #strike[Rebrand. Go ahead and do it. Call it crow. Use the crow logo.]  
 + Bring tinymist extension or whatever into contrib and make a default .typ view just like markdown (and enable for markdown as well!)
 + ADD SCROLL TO TERMINAL!
-+ Make highlighting text and adding quotes, parentheses, [, {, etc surround the highlighted text instead of replacing and be cautious of how that can clash with dedenting, copy over from vscode, sidex is very very rough on this. crow-ui has this. we might be able to learn from it lol.
++ #strike[Make highlighting text and adding quotes, parentheses, etc surround the highlighted text instead of replacing and be cautious of how that can clash with dedenting, copy over from vscode, sidex is very very rough on this. crow-ui has this. we might be able to learn from it lol.]
+
 + Some kind of dirty indicator. Probably another one of these "learn from vscode/crow-ui how this works" situations lmfao. Hey at least they got git integration working for us.
 + ATProto PDS based auth
 
