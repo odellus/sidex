@@ -1,9 +1,8 @@
 name: Build Desktop App
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -36,6 +35,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Update version from git tag
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "Building version: $VERSION"
+          
+          # Update tauri.conf.json
+          jq ".version = \"$VERSION\"" src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+          
+          # Update package.json
+          jq ".version = \"$VERSION\"" package.json > tmp.json && mv tmp.json package.json
+          
+          # Update Cargo.toml
+          sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
+          
+          # Verify the changes
+          echo "tauri.conf.json version: $(jq -r .version src-tauri/tauri.conf.json)"
+          echo "package.json version: $(jq -r .version package.json)"
+          echo "Cargo.toml version: $(grep '^version = ' src-tauri/Cargo.toml)"
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -72,9 +90,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: app-v__VERSION__
+          tagName: ${{ github.ref_name }}
           releaseName: "Crow v__VERSION__"
           releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
+          releaseDraft: false
+          prerelease: ${{ github.event.release.prerelease }}
           args: ${{ matrix.args }}
