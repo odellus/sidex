@@ -104,3 +104,5 @@ public/builtin-extensions.js
 
 research
 .playwright-mcp
+
+/bin/act

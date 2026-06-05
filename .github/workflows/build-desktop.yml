@@ -66,6 +66,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Build frontend
+        run: npm run build
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -77,4 +80,4 @@ jobs:
           releaseBody: "See the assets to download this version and install."
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} --no-before-build
