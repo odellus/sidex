@@ -6,9 +6,12 @@
 + #strike[Change the default color of the text in rich text editor to same white as text in monaco editor. It's dark enough. Just use white text everywhere in the chat, including in the rendered chat. text is far far too dark everywhere in chat.]
 + #strike[Model selection in chat]
 + #strike[Make all text in chat brighter. it's a dark theme. can barely see text right now. too muted.]
++ #strike[Add resume session logic to chat history so you can reload old sessions]
 + Pull thinking tokens out of the weird scrollable box they're in and enable syntax highlighting for their thoughts
 + Log to `~/.local/share/crow/acp.log` and find all instances where we still log to some sidex directory to rename to crow
-
++ Add katex to rendering in chat
++ Moving off of window should not prevent information streamed from the backend from being displayed. You should be able to move between windows and see response from different chats. 
++ Moving back to previously viewed window the focus should be on the very bottom of the chat
 
 === Rich Text Editor
 + Enable scroll wheel in rich text editor. 

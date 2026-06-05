@@ -620,6 +620,28 @@ export class XtermTerminal
 			)
 		);
 
+		// Workaround for Tauri/Wayland wheel event bug (https://github.com/tauri-apps/tauri/issues/14427)
+		// On Wayland, WebKit2GTK may not deliver wheel events to xterm.js's internal handler.
+		// This explicit handler ensures scrolling works by manually calling scrollLines().
+		ad.add(
+			dom.addDisposableListener(
+				this.raw.element,
+				dom.EventType.MOUSE_WHEEL,
+				(e: IMouseWheelEvent) => {
+					const config = this._terminalConfigurationService.config;
+					const sensitivity = e.altKey
+						? config.fastScrollSensitivity
+						: config.mouseWheelScrollSensitivity;
+					const lines = Math.round(e.deltaY * sensitivity / 10);
+					if (lines !== 0) {
+						this.raw.scrollLines(lines);
+					}
+					e.preventDefault();
+				},
+				{ passive: false }
+			)
+		);
+
 		this._refreshLigaturesAddon();
 
 		this._attached = { container, options };
