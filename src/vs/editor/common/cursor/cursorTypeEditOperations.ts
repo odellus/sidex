@@ -546,7 +546,9 @@ export class SurroundSelectionOperation {
 		selections: Selection[],
 		ch: string
 	): boolean {
-		if (!shouldSurroundChar(config, ch) || !config.surroundingPairs.hasOwnProperty(ch)) {
+		const shouldSurround = shouldSurroundChar(config, ch);
+		const hasChar = config.surroundingPairs.hasOwnProperty(ch);
+		if (!shouldSurround || !hasChar) {
 			return false;
 		}
 		const isTypingAQuoteCharacter = isQuote(ch);

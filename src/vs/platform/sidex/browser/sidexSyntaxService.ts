@@ -27,11 +27,17 @@ export interface AutoClosePair {
 	not_in: string[];
 }
 
+export interface SurroundPair {
+	open: string;
+	close: string;
+}
+
 export interface LanguageConfig {
 	line_comment: string | null;
 	block_comment: [string, string] | null;
 	brackets: [string, string][];
 	auto_closing_pairs: AutoClosePair[];
+	surrounding_pairs: SurroundPair[];
 }
 
 export interface SyntaxToken {

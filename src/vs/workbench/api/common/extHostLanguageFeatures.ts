@@ -4377,6 +4377,9 @@ export class ExtHostLanguageFeatures extends CoreDisposable implements extHostPr
 			__characterPairSupport: configuration.__characterPairSupport,
 			autoClosingPairs: configuration.autoClosingPairs
 				? ExtHostLanguageFeatures._serializeAutoClosingPairs(configuration.autoClosingPairs)
+				: undefined,
+			surroundingPairs: configuration.surroundingPairs
+				? configuration.surroundingPairs.map(p => Array.isArray(p) ? { open: p[0], close: p[1] } : p)
 				: undefined
 		};
 

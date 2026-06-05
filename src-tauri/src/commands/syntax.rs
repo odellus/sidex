@@ -26,11 +26,18 @@ pub struct AutoClosePair {
 }
 
 #[derive(Debug, Serialize)]
+pub struct SurroundPair {
+    pub open: String,
+    pub close: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct LanguageConfigResponse {
     pub line_comment: Option<String>,
     pub block_comment: Option<(String, String)>,
     pub brackets: Vec<(String, String)>,
     pub auto_closing_pairs: Vec<AutoClosePair>,
+    pub surrounding_pairs: Vec<SurroundPair>,
 }
 
 #[derive(Debug, Serialize)]
@@ -142,6 +149,14 @@ pub fn syntax_get_language_config(language_id: String) -> Result<LanguageConfigR
                 open: p.open.clone(),
                 close: p.close.clone(),
                 not_in: p.not_in.clone(),
+            })
+            .collect(),
+        surrounding_pairs: cfg
+            .surrounding_pairs
+            .iter()
+            .map(|(o, c)| SurroundPair {
+                open: o.clone(),
+                close: c.clone(),
             })
             .collect(),
     })

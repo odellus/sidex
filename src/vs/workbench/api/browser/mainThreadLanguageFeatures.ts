@@ -1313,6 +1313,10 @@ export class MainThreadLanguageFeatures extends Disposable implements MainThread
 			configuration.autoClosingPairs = _configuration.__characterPairSupport.autoClosingPairs;
 		}
 
+		if (_configuration.surroundingPairs) {
+			configuration.surroundingPairs = _configuration.surroundingPairs;
+		}
+
 		if (_configuration.__electricCharacterSupport && _configuration.__electricCharacterSupport.docComment) {
 			configuration.__electricCharacterSupport = {
 				docComment: {

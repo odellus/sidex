@@ -576,6 +576,10 @@ export interface ILanguageConfigurationDto {
 		close: string;
 		notIn?: string[];
 	}[];
+	surroundingPairs?: {
+		open: string;
+		close: string;
+	}[];
 }
 
 export type GlobPattern = string | IRelativePattern;

@@ -223,8 +223,49 @@ class TauriExtensionHostContribution extends Disposable implements IWorkbenchCon
 			const bootstrap = await bootstrapExtensionPlatform();
 			this._applyBootstrap(bootstrap);
 			this._connect(bootstrap.transport.endpoint);
+			this._loadBuiltinLanguageConfigs();
 		} catch (error) {
 			this.logService.warn(`[ExtHost] platform bootstrap failed ${(error as Error)?.message ?? String(error)}`);
+		}
+	}
+
+	private async _loadBuiltinLanguageConfigs(): Promise<void> {
+		try {
+			const { invoke } = await import('@tauri-apps/api/core');
+			const languages = await invoke<Array<{ id: string }>>('syntax_get_languages');
+			for (const lang of languages) {
+				try {
+					const cfg = await invoke<{
+						line_comment: string | null;
+						block_comment: [string, string] | null;
+						brackets: [string, string][];
+						auto_closing_pairs: Array<{ open: string; close: string; not_in: string[] }>;
+						surrounding_pairs: Array<{ open: string; close: string }>;
+					}>('syntax_get_language_config', { languageId: lang.id });
+					if (!cfg) { continue; }
+					const langConfig: LanguageConfiguration = {};
+					if (cfg.line_comment || cfg.block_comment) {
+						langConfig.comments = {
+							lineComment: cfg.line_comment ?? undefined,
+							blockComment: cfg.block_comment ?? undefined,
+						};
+					}
+					if (cfg.brackets?.length) {
+						langConfig.brackets = cfg.brackets;
+					}
+					if (cfg.auto_closing_pairs?.length) {
+						langConfig.autoClosingPairs = cfg.auto_closing_pairs;
+					}
+					if (cfg.surrounding_pairs?.length) {
+						langConfig.surroundingPairs = cfg.surrounding_pairs;
+					}
+					this.langConfigService.register(lang.id, langConfig);
+				} catch {
+					// skip languages we can't load config for
+				}
+			}
+		} catch (e) {
+			this.logService.warn(`[ExtHost] failed to load builtin language configs: ${(e as Error)?.message ?? String(e)}`);
 		}
 	}
 
