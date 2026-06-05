@@ -17,10 +17,10 @@ jobs:
       matrix:
         include:
           - platform: linux-x86_64
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             args: ""
           - platform: linux-aarch64
-            os: ubuntu-22.04-arm
+            os: ubuntu-24.04-arm
             args: ""
           - platform: macos-x86_64
             os: macos-latest
@@ -43,7 +43,7 @@ jobs:
           cache: "npm"
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: ${{ matrix.platform == 'macos-x86_64' && 'x86_64-apple-darwin' || matrix.platform == 'macos-aarch64' && 'aarch64-apple-darwin' || '' }}
 
@@ -67,7 +67,7 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

@@ -136,3 +136,6 @@ The workspace has many crates. The most important ones for day-to-day work:
 + VSCode's `nls` (national language support) wraps all user-facing strings — `localize('key', 'default')` pattern everywhere
 + `invoke()` calls from frontend to Rust are async and can fail — always handle the error case
 + The `acp.log` file grows fast (60MB+) — always use `grep`, `tail`, or `sed` with line ranges, never try to read the whole thing
+
+
+
