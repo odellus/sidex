@@ -30,7 +30,14 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     watch: {
-      ignored: ['**/src-tauri/**'],
+      ignored: [
+        '**/src-tauri/**',
+        '**/target/**',
+        '**/dist/**',
+        '**/.venv/**',
+        '**/node_modules/**',
+        '**/research/**',
+      ],
     },
   },
   envPrefix: ['VITE_', 'TAURI_'],

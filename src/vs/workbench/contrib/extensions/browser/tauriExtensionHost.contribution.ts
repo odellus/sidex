@@ -219,11 +219,11 @@ class TauriExtensionHostContribution extends Disposable implements IWorkbenchCon
 				this._removeUninstalledExtension(event);
 			}
 		}));
+		this._loadBuiltinLanguageConfigs();
 		try {
 			const bootstrap = await bootstrapExtensionPlatform();
 			this._applyBootstrap(bootstrap);
 			this._connect(bootstrap.transport.endpoint);
-			this._loadBuiltinLanguageConfigs();
 		} catch (error) {
 			this.logService.warn(`[ExtHost] platform bootstrap failed ${(error as Error)?.message ?? String(error)}`);
 		}

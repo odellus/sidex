@@ -489,6 +489,9 @@ pub fn builtin_language_configurations() -> Vec<LanguageConfiguration> {
         LanguageConfiguration::builder("r", "R")
             .exts(&[".r", ".R", ".rmd"]).line_cmt("#")
             .indent(C_INC, C_DEC).fold_markers(C_FOLD_S, C_FOLD_E).build(),
+        LanguageConfiguration::builder("typst", "Typst")
+            .exts(&[".typ"]).line_cmt("//").block_cmt("/*", "*/")
+            .indent(C_INC, C_DEC).fold_markers(C_FOLD_S, C_FOLD_E).build(),
     ]
 }
 

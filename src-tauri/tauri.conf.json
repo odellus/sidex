@@ -43,10 +43,11 @@
     "category": "DeveloperTool",
     "shortDescription": "A fast, open-source code editor.",
     "longDescription": "Crow is a fast, lightweight, open-source code editor built for developers.",
-    "resources": [
-      "extension-host/*",
-      "shell-integration/*"
-    ],
+    "resources": {
+      "extension-host/": "extension-host/",
+      "shell-integration/": "shell-integration/",
+      "../extensions/": "extensions/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

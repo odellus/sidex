@@ -7,17 +7,27 @@
 + #strike[Model selection in chat]
 + #strike[Make all text in chat brighter. it's a dark theme. can barely see text right now. too muted.]
 + #strike[Add resume session logic to chat history so you can reload old sessions]
+
 + Pull thinking tokens out of the weird scrollable box they're in and enable syntax highlighting for their thoughts
 + Log to `~/.local/share/crow/acp.log` and find all instances where we still log to some sidex directory to rename to crow
 + Add katex to rendering in chat
 + Moving off of window should not prevent information streamed from the backend from being displayed. You should be able to move between windows and see response from different chats. 
 + Moving back to previously viewed window the focus should be on the very bottom of the chat
++ Include the session-id once it is selected at the top
 
 === Rich Text Editor
++ Give rich text editor for a chat its own URI schema so we can split the rich text editor into a whole other window
++ experiment with seps on a document 
 + Enable scroll wheel in rich text editor. 
-+ Resizing rich text editor. 
++ Resizing rich text editor. <- This seems less important if you can split into another window
 + Proper syntax highlighting for typst (WYSIWYG?) and good @ context mechanism in the rich text editor. 
-
++ when message is sent it shows up as bubble in chat
++ work on highlighting context and adding to rich text editor this is the most crucial.
++ longer term I see user talking in a persistent document with seps that get inserted and the agent response is linked to somehow but we create a document out of it
++ This rich text editor should basically be monaco++
++ I want full typst syntax highlighting
++ I want to be able to save what I was typing in so drafts folder for session/prompt essentially
++ Autocomplete with something like zed uses for local model autocomplete
 
 === Tools
 + Add diff fixtures for edit and write
@@ -40,10 +50,14 @@
 == IDE specific
 + #strike[Rebrand. Go ahead and do it. Call it crow. Use the crow logo.]  
 + Bring tinymist extension or whatever into contrib and make a default .typ view just like markdown (and enable for markdown as well!)
-+ ADD SCROLL TO TERMINAL!
++ #strike[ADD SCROLL TO TERMINAL!]
 + #strike[Make highlighting text and adding quotes, parentheses, etc surround the highlighted text instead of replacing and be cautious of how that can clash with dedenting, copy over from vscode, sidex is very very rough on this. crow-ui has this. we might be able to learn from it lol.]
++ #strike[Add .github/workflows to create release build of Crow ADE from our fork of sidex]
++ #strike[Added `install` flag to `crow-cli` so we can `crow-cli install desktop` and it will install Crow ADE on their machine]
 
 + Some kind of dirty indicator. Probably another one of these "learn from vscode/crow-ui how this works" situations lmfao. Hey at least they got git integration working for us.
 + ATProto PDS based auth
+
+
 
 // $ nabla dot arrow(E) = rho / epsilon_0 $
