@@ -27,14 +27,57 @@ function getFileSizes(dir, extension) {
   };
 }
 
-// Copy extensions
+// Copy extensions (only runtime assets, not dev dependencies)
 if (fs.existsSync('extensions')) {
-  fs.cpSync('extensions', path.join(DIST_DIR, 'extensions'), { recursive: true, force: true });
+  const extensionsDest = path.join(DIST_DIR, 'extensions');
+  fs.mkdirSync(extensionsDest, { recursive: true });
+  
+  // Files/directories that are needed at runtime
+  const runtimeAssets = [
+    'package.json',
+    'package.nls.json',
+    'dist',
+    'out',
+    'syntaxes',
+    'themes',
+    'snippets',
+    'language-configuration.json',
+    'icon.png',
+    'media',
+    'preview-src',
+    'schemas',
+    'notebook-out',
+  ];
+  
+  const extensionDirs = fs.readdirSync('extensions', { withFileTypes: true })
+    .filter(dirent => dirent.isDirectory())
+    .map(dirent => dirent.name);
+  
+  for (const extName of extensionDirs) {
+    const extSrc = path.join('extensions', extName);
+    const extDest = path.join(extensionsDest, extName);
+    
+    fs.mkdirSync(extDest, { recursive: true });
+    
+    for (const asset of runtimeAssets) {
+      const srcPath = path.join(extSrc, asset);
+      const destPath = path.join(extDest, asset);
+      
+      if (fs.existsSync(srcPath)) {
+        const stat = fs.statSync(srcPath);
+        if (stat.isDirectory()) {
+          fs.cpSync(srcPath, destPath, { recursive: true });
+        } else {
+          fs.copyFileSync(srcPath, destPath);
+        }
+      }
+    }
+  }
 }
 if (fs.existsSync('extensions-meta.json')) {
   fs.copyFileSync('extensions-meta.json', path.join(DIST_DIR, 'extensions-meta.json'));
 }
-console.log('Post-build: copied extensions\n');
+console.log('Post-build: copied extensions (filtered)\n');
 
 // Calculate bundle sizes
 const js = getFileSizes(ASSETS_DIR, '.js');
