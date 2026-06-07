@@ -1938,6 +1938,107 @@
 	height: 0;
 }
 
+/* ===== Mention Chips ===== */
+.mention-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 8px;
+	background: var(--vscode-badge-background);
+	color: var(--vscode-badge-foreground);
+	border-radius: 12px;
+	font-size: 12px;
+	line-height: 1.4;
+	white-space: nowrap;
+	user-select: none;
+}
+
+.mention-chip .mention-icon {
+	font-size: 11px;
+}
+
+.mention-chip .mention-label {
+	font-weight: 500;
+}
+
+/* ===== Suggestion Popup ===== */
+.sc-suggestions-popup {
+	background: var(--vscode-editorSuggestWidget-background, var(--vscode-editor-background));
+	border: 1px solid var(--vscode-editorSuggestWidget-border, var(--vscode-widget-border));
+	border-radius: 4px;
+	padding: 4px 0;
+	min-width: 200px;
+	max-width: 400px;
+	max-height: 300px;
+	overflow-y: auto;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.sc-suggestion-category {
+	padding: 6px 12px 4px;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--vscode-editorSuggestWidget-foreground, var(--vscode-foreground));
+	opacity: 0.7;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+.sc-suggestion-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 12px;
+	cursor: pointer;
+	transition: background 0.1s;
+}
+
+.sc-suggestion-item:hover,
+.sc-suggestion-item.is-selected {
+	background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-hoverBackground));
+}
+
+.sc-suggestion-item.is-selected {
+	background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground));
+	color: var(--vscode-editorSuggestWidget-selectedForeground, var(--vscode-list-activeSelectionForeground));
+}
+
+.sc-suggestion-icon {
+	font-size: 14px;
+	flex-shrink: 0;
+}
+
+.sc-suggestion-label {
+	font-size: 13px;
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sc-suggestion-no-results {
+	padding: 12px;
+	text-align: center;
+	color: var(--vscode-editorSuggestWidget-foreground, var(--vscode-foreground));
+	opacity: 0.6;
+}
+
+/* ===== Tippy.js Theme Override ===== */
+.tippy-box[data-theme~='sidex'] {
+	background: var(--vscode-editorSuggestWidget-background, var(--vscode-editor-background));
+	border: 1px solid var(--vscode-editorSuggestWidget-border, var(--vscode-widget-border));
+	border-radius: 4px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.tippy-box[data-theme~='sidex'] .tippy-content {
+	padding: 0;
+}
+
+.tippy-box[data-theme~='sidex'] .tippy-arrow {
+	display: none;
+}
+
 /* ===== White Text Override (must be last to win cascade) ===== */
 /* Force white text on all chat elements, overriding theme variables */
 .acp-chat-view * {

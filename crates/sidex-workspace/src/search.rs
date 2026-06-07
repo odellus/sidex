@@ -1181,8 +1181,20 @@ pub fn search_files(
         }
 
         let name = entry.file_name().to_string_lossy();
-        let Some(score) = fuzzy_score(&pattern_bytes, &name) else {
-            continue;
+        
+        // Score against both filename and relative path, take the higher score
+        let name_score = fuzzy_score(&pattern_bytes, &name);
+        
+        let relative_path = path.strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy();
+        let path_score = fuzzy_score(&pattern_bytes, &relative_path);
+        
+        let score = match (name_score, path_score) {
+            (Some(n), Some(p)) => std::cmp::max(n, p),
+            (Some(n), None) => n,
+            (None, Some(p)) => p,
+            (None, None) => continue,
         };
 
         scored.push(FileMatch {

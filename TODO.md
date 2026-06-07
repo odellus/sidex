@@ -67,8 +67,8 @@ graph TD
 
 - Some kind of dirty indicator. Probably another one of these "learn from vscode/crow-ui how this works" situations lmfao. Hey at least they got git integration working for us.
 - ATProto PDS based auth
-- Add `` ` `` character to the list of characters that typst LSP uses for autoclose and autosurround behavior in editor
-
+- ~~Add `` ` `` character to the list of characters that typst LSP uses for autoclose and autosurround behavior in editor~~
+- Make the preview robust to changes in editor size via css or something. Violates constraints that are assumed of vscode/sidex editor components and leads to errors if it does not properly resize and play nice with the IDE.
 ## CROW-CLI SPECIFIC CHANGES
 
 - Do we want to make modifying crow-cli and crow-mcp like the core use case of this bad-boy?

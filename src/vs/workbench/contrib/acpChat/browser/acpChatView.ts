@@ -17,6 +17,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IAcpChatService } from './acpChatService.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { ScrollManager } from './scrollManager.js';
 import { ChatHeader } from './components/toolbar/chatHeader.js';
 import { ChatInput } from './components/input/chatInput.js';
@@ -61,6 +62,7 @@ export class AcpChatViewPane extends ViewPane {
 		@IHoverService hoverService: IHoverService,
 		@IAcpChatService private readonly chatService: IAcpChatService,
 		@ICommandService private readonly _commandService: ICommandService,
+		@IWorkspaceContextService private readonly _workspaceContext: IWorkspaceContextService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -93,7 +95,8 @@ export class AcpChatViewPane extends ViewPane {
 		this._scrollManager = new ScrollManager(this._messagesEl, this._sentinelEl);
 		this._viewDisposables.add(this._scrollManager);
 
-		this._input = new ChatInput();
+		const workspaceRoot = this._workspaceContext.getWorkspace().folders[0]?.uri?.fsPath || '';
+		this._input = new ChatInput(workspaceRoot);
 		this._input.appendTo(parent);
 		this._viewDisposables.add(this._input);
 

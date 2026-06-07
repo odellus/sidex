@@ -45,14 +45,16 @@ export class SideXSearchProvider {
 	): Promise<FileSearchResult[]> {
 		try {
 			const results = await invoke('search_text', {
-				dir: directory,
+				root: directory,
 				query,
-				caseSensitive: options.caseSensitive ?? false,
-				wholeWord: options.wholeWord ?? false,
-				regex: options.regex ?? false,
-				include: options.include ?? '',
-				exclude: options.exclude ?? '',
-				maxResults: options.maxResults ?? 2000
+				options: {
+					case_sensitive: options.caseSensitive ?? false,
+					whole_word: options.wholeWord ?? false,
+					is_regex: options.regex ?? false,
+					include: options.include ? [options.include] : [],
+					exclude: options.exclude ? [options.exclude] : [],
+					max_results: options.maxResults ?? 2000,
+				},
 			});
 			return (results as FileSearchResult[]) || [];
 		} catch (e) {
@@ -63,8 +65,8 @@ export class SideXSearchProvider {
 
 	async fileSearch(directory: string, pattern: string): Promise<string[]> {
 		try {
-			const results = await invoke('search_files', { dir: directory, pattern });
-			return (results as string[]) || [];
+			const results = await invoke<Array<{ path: string }>>('search_files', { root: directory, pattern });
+			return (results || []).map(r => r.path);
 		} catch {
 			return [];
 		}

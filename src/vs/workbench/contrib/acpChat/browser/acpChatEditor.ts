@@ -201,7 +201,8 @@ export class AcpChatEditor extends EditorPane {
 		this._sentinelEl = dom.append(this._messagesEl, $('div.sc-scroll-sentinel'));
 		this._scrollManager = new ScrollManager(this._messagesEl, this._sentinelEl);
 
-		this._chatInput = new ChatInput();
+		const workspaceRoot = this._workspaceContext.getWorkspace().folders[0]?.uri?.fsPath || '';
+		this._chatInput = new ChatInput(workspaceRoot);
 		this._chatInput.appendTo(this._rootEl);
 
 		this._groupComponents = [];

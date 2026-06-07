@@ -9,6 +9,9 @@ import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import Image from '@tiptap/extension-image';
+import Mention from '@tiptap/extension-mention';
+import { invoke } from '@tauri-apps/api/core';
+import { makeSuggestionConfig } from './mentionSuggestion.js';
 import type { ContentBlock } from '@agentclientprotocol/sdk';
 
 export interface ResolvedMention {
@@ -23,6 +26,59 @@ interface JSONNode {
 	text?: string;
 	content?: JSONNode[];
 	marks?: Array<{ type: string; attrs?: Record<string, unknown> }>;
+}
+
+const IMAGE_EXTS = /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i;
+
+/** Read file contents for @-mentions and embed them as `resource` or `image` blocks. */
+async function embedMentionContent(blocks: ContentBlock[]): Promise<ContentBlock[]> {
+	const result: ContentBlock[] = [];
+	for (const block of blocks) {
+		if (block.type === 'resource_link' && (block as { uri?: string }).uri?.startsWith('file://')) {
+			const path = (block as { uri: string }).uri.slice('file://'.length);
+			const isImage = IMAGE_EXTS.test(path);
+
+			if (isImage) {
+				try {
+					const bytes = await invoke<number[]>('read_file_bytes', { path });
+					const base64 = bytesToBase64(bytes);
+					const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
+					const mimeType = extToMime(ext);
+					result.push({ type: 'image', mimeType, data: base64, uri: `file://${path}` } as ContentBlock);
+					continue;
+				} catch { /* fall through */ }
+			} else {
+				try {
+					const content = await invoke<string>('read_file', { path });
+					result.push({
+						type: 'resource',
+						resource: { uri: `file://${path}`, text: content, mimeType: 'text/plain' },
+					} as ContentBlock);
+					continue;
+				} catch { /* fall through */ }
+			}
+		}
+		result.push(block);
+	}
+	return result;
+}
+
+function bytesToBase64(bytes: number[]): string {
+	const chunks: string[] = [];
+	const CHUNK = 0x8000;
+	for (let i = 0; i < bytes.length; i += CHUNK) {
+		chunks.push(String.fromCharCode(...bytes.slice(i, i + CHUNK)));
+	}
+	return btoa(chunks.join(''));
+}
+
+function extToMime(ext: string): string {
+	const map: Record<string, string> = {
+		png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+		gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+		bmp: 'image/bmp', ico: 'image/x-icon',
+	};
+	return map[ext] || 'application/octet-stream';
 }
 
 /** Convert inline marks to markdown syntax */
@@ -211,7 +267,7 @@ export class RichTextEditor extends Component {
 	private readonly _onUpdate = this._register(new Emitter<void>());
 	readonly onUpdate: Event<void> = this._onUpdate.event;
 
-	constructor(placeholder: string) {
+	constructor(placeholder: string, workspaceRoot: string = '') {
 		super('div', 'sc-rich-editor');
 
 		this._editorEl = DOM.append(this.element, $('div.sc-editor-content'));
@@ -236,7 +292,6 @@ export class RichTextEditor extends Component {
 			element: this._editorEl,
 			extensions: [
 				StarterKit.configure({
-					// Disable markdown formatting - we want plain text input, not WYSIWYG
 					bold: false,
 					italic: false,
 					code: false,
@@ -248,6 +303,22 @@ export class RichTextEditor extends Component {
 					blockquote: false,
 					codeBlock: false,
 					horizontalRule: false,
+				}),
+				Mention.configure({
+					HTMLAttributes: { class: 'mention-chip' },
+					suggestion: makeSuggestionConfig(workspaceRoot),
+					renderHTML({ node, HTMLAttributes }) {
+						const label = node.attrs.label as string;
+						const id = node.attrs.id as string;
+						const isImage = IMAGE_EXTS.test(id);
+						const icon = id === 'selection' ? '🎯' : isImage ? '🖼️' : '📄';
+						return [
+							'span',
+							{ ...HTMLAttributes, class: 'mention-chip', 'data-mention-id': id },
+							['span', { class: 'mention-icon' }, icon],
+							['span', { class: 'mention-label' }, label],
+						];
+					},
 				}),
 				Placeholder.configure({
 					placeholder,
@@ -343,30 +414,36 @@ export class RichTextEditor extends Component {
 		this._editor?.commands.clearContent();
 	}
 
-	send(): void {
+	async send(): Promise<void> {
 		if (!this._editor || this._disabled) return;
 
 		const json = this._editor.getJSON();
 		const blocks = extractContentBlocks(json);
 
 		const hasContent = blocks.some(b => {
-			if (b.type === 'text') return (b.text || '').trim().length > 0;
+			if (b.type === 'text') return ((b as { text?: string }).text || '').trim().length > 0;
 			return true;
 		});
 
 		if (!hasContent) return;
 
-		const text = blocks
+		// Clear immediately for snappy UX
+		this.clear();
+
+		// Embed file content for @-mentions
+		const embeddedBlocks = await embedMentionContent(blocks);
+
+		const text = embeddedBlocks
 			.map(b => {
-				if (b.type === 'text') return b.text;
+				if (b.type === 'text') return (b as { text?: string }).text || '';
 				if (b.type === 'image') return '[Image]';
-				if (b.type === 'resource_link') return `[@${b.name}](${b.uri})`;
+				if (b.type === 'resource') return `[@${(b as { resource?: { uri?: string } }).resource?.uri?.split('/').pop() || 'file'}](embedded)`;
+				if (b.type === 'resource_link') return `[@${(b as { name?: string }).name}](${(b as { uri?: string }).uri})`;
 				return '';
 			})
 			.join('');
 
-		this._onSend.fire({ blocks, text });
-		this.clear();
+		this._onSend.fire({ blocks: embeddedBlocks, text });
 	}
 
 	override dispose(): void {

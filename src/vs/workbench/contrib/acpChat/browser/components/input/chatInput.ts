@@ -40,13 +40,13 @@ export class ChatInput extends Component {
 
 	get mode(): AgentMode { return this._currentMode; }
 
-	constructor() {
+	constructor(workspaceRoot: string = '') {
 		super('div', 'sc-input-area');
 
 		const container = this.append('div', 'sc-input-container');
 
 		// Rich text editor
-		this._richEditor = new RichTextEditor('Ask anything...');
+		this._richEditor = new RichTextEditor('Ask anything...', workspaceRoot);
 		container.appendChild(this._richEditor.element);
 		this._disposables.add(this._richEditor);
 

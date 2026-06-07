@@ -29,14 +29,16 @@ export class SideXSearchService {
 		try {
 			return (
 				(await invoke('search_text', {
-					dir: directory,
+					root: directory,
 					query,
-					caseSensitive: options?.caseSensitive ?? false,
-					wholeWord: options?.wholeWord ?? false,
-					regex: options?.regex ?? false,
-					include: options?.include ?? null,
-					exclude: options?.exclude ?? null,
-					maxResults: options?.maxResults ?? 1000
+					options: {
+						case_sensitive: options?.caseSensitive ?? false,
+						whole_word: options?.wholeWord ?? false,
+						is_regex: options?.regex ?? false,
+						include: options?.include ? [options.include] : [],
+						exclude: options?.exclude ? [options.exclude] : [],
+						max_results: options?.maxResults ?? 1000,
+					},
 				})) || []
 			);
 		} catch (e) {
@@ -47,7 +49,8 @@ export class SideXSearchService {
 
 	async searchFiles(directory: string, pattern: string): Promise<string[]> {
 		try {
-			return (await invoke('search_files', { dir: directory, pattern })) || [];
+			const results = await invoke<Array<{ path: string }>>('search_files', { root: directory, pattern });
+			return (results || []).map(r => r.path);
 		} catch {
 			return [];
 		}
