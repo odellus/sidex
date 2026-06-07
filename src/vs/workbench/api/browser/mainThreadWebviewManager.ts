@@ -25,10 +25,14 @@ export class MainThreadWebviewManager extends Disposable {
 		);
 		context.set(extHostProtocol.MainContext.MainThreadWebviewPanels, webviewPanels);
 
-		const customEditors = this._register(
-			instantiationService.createInstance(MainThreadCustomEditors, context, webviews, webviewPanels)
-		);
-		context.set(extHostProtocol.MainContext.MainThreadCustomEditors, customEditors);
+		try {
+			const customEditors = this._register(
+				instantiationService.createInstance(MainThreadCustomEditors, context, webviews, webviewPanels)
+			);
+			context.set(extHostProtocol.MainContext.MainThreadCustomEditors, customEditors);
+		} catch {
+			// customEditorService may not be available in all environments
+		}
 
 		const webviewViews = this._register(
 			instantiationService.createInstance(MainThreadWebviewsViews, context, webviews)

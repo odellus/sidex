@@ -34,7 +34,7 @@
 + Add terminal fixture that is a "real terminal" in other words xterm.js
 + Client side tools that do orchestration stuff. Cool orchestration tasks like 
   - list_sessions — list all the active sessions open in editor
-  - send — send a message to another user. hooked up to state to say who it called so called agent replies back after react loop to execute task with a tool-less, RESTful summary
+  - send — send a message to another agent session. hooked up to state to say who it called so called agent replies back after react loop to execute task with a tool-less, RESTful summary
   - task_read — read from the task list
   - task_write — create, update, delete items from a todo task list that is tied into how the agents work, all of this will be described in great detail elsewhere but basically we have three tiers of agents and the middle agent is in charge of assigning and evaluating tasks and the task_write tool puts it in a loop where it has to move tasks to done or it gets a reply telling it to do the task or move to done until it does
   
@@ -57,7 +57,11 @@
 
 + Some kind of dirty indicator. Probably another one of these "learn from vscode/crow-ui how this works" situations lmfao. Hey at least they got git integration working for us.
 + ATProto PDS based auth
-
++ Add \` character to the list of characters that typst LSP uses for autoclose and autosurround behavior in editor
 
 
 // $ nabla dot arrow(E) = rho / epsilon_0 $
+
+
+== CROW-CLI SPECIFIC CHANGES
++ Do we want to make modifying crow-cli and crow-mcp like the core use case of this bad-boy?

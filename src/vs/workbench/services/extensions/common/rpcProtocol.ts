@@ -274,7 +274,7 @@ export class RPCProtocol extends Disposable implements IRPCProtocol {
 		for (let i = 0, len = identifiers.length; i < len; i++) {
 			const identifier = identifiers[i];
 			if (!this._locals[identifier.nid]) {
-				throw new Error(`Missing proxy instance ${identifier.sid}`);
+				console.warn(`Missing proxy instance ${identifier.sid} (optional service may be unavailable)`);
 			}
 		}
 	}

@@ -250,9 +250,6 @@ class BrowserExtensionHostFactory implements IExtensionHostFactory {
 				return null;
 			}
 			case ExtensionHostKind.LocalWebWorker: {
-				if ((globalThis as any).__SIDEX_TAURI__) {
-					return null;
-				}
 				const startup = ExtensionHostStartup.LazyAutoStart;
 				return this._instantiationService.createInstance(WebWorkerExtensionHost, runningLocation, startup, this._createLocalExtensionHostDataProvider(runningLocations, runningLocation, isInitialStart));
 			}

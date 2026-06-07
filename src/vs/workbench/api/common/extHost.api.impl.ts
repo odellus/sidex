@@ -1868,7 +1868,17 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 			},
 			encode(content: string, options?: { uri?: vscode.Uri; encoding?: string }) {
 				return extHostWorkspace.encode(content, options);
-			}
+			},
+			// Notebook API stubs (not implemented in sidex, but required by some extensions)
+			get notebookDocuments(): readonly vscode.NotebookDocument[] {
+				return [];
+			},
+			onDidOpenNotebookDocument: Event.None,
+			onDidCloseNotebookDocument: Event.None,
+			onDidChangeNotebookDocument: Event.None,
+			onDidSaveNotebookDocument: Event.None,
+			registerNotebookSerializer: () => ({ dispose() { } }),
+			registerNotebookCellStatusBarItemProvider: () => ({ dispose() { } }),
 		} as any;
 
 		// namespace: scm
