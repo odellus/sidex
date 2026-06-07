@@ -1,6 +1,6 @@
 {
   "name": "crow",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "type": "module",
   "scripts": {
     "setup": "node scripts/generate-extension-meta.js",

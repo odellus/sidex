@@ -74,6 +74,7 @@ if (fs.existsSync('extensions')) {
 }
 
 if (fs.existsSync('extensions-meta.json')) {
+  fs.mkdirSync(DIST_DIR, { recursive: true });
   const destPath = path.join(DIST_DIR, 'extensions-meta.json');
   fs.copyFileSync('extensions-meta.json', destPath);
 }
