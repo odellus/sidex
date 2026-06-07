@@ -396,10 +396,10 @@ export class AcpChatEditor extends EditorPane {
 			case 'agent_message_chunk':
 				comp = new AgentMessageGroup();
 				break;
-			case 'tool_call':
-			case 'tool_call_update':
-				comp = new ToolCallGroup();
-				break;
+		case 'tool_call':
+		case 'tool_call_update':
+			comp = new ToolCallGroup(this._instantiationService);
+			break;
 			default:
 				comp = new AgentMessageGroup();
 				break;

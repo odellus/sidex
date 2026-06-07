@@ -1,6 +1,7 @@
 import { Component } from '../base.js';
 import { ToolCallItem } from './toolCallItem.js';
 import type { AcpNotification } from '../../acp-utils.js';
+import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 
 export interface ToolCallInfo {
 	id: string;
@@ -18,9 +19,11 @@ export interface ToolCallInfo {
 export class ToolCallGroup extends Component {
 	private _items: Map<string, ToolCallItem> = new Map();
 	private _toolData: Map<string, Partial<ToolCallInfo>> = new Map();
+	private readonly _instantiationService: IInstantiationService;
 
-	constructor() {
+	constructor(instantiationService: IInstantiationService) {
 		super('div', 'sc-tool-block');
+		this._instantiationService = instantiationService;
 	}
 
 	appendNotification(notification: AcpNotification): void {
@@ -31,7 +34,7 @@ export class ToolCallGroup extends Component {
 			const tc = this._extractToolCallInfo(update);
 			console.log(`[ToolCallGroup] tool_call: id="${tc.id}" name="${tc.name}" kind="${tc.kind}"`);
 			this._toolData.set(tc.id, tc);
-			const item = new ToolCallItem(tc);
+			const item = new ToolCallItem(tc, this._instantiationService);
 			item.appendTo(this.element);
 			this._register(item);
 			this._items.set(tc.id, item);

@@ -3,10 +3,19 @@
  *  - FileReadView: Read-only Monaco editor with syntax highlighting
  *  - FileWriteView: New file view (all green content)
  *  - FileEditView: Inline diff view (before vs after)
+ *
+ *  Uses VSCode's CodeEditorWidget and DiffEditorWidget (not the standalone
+ *  monaco-editor npm package) to stay within the workbench theme service.
  *--------------------------------------------------------------------------------------------*/
 
 import { Component } from '../base.js';
-import * as monaco from 'monaco-editor';
+import { CodeEditorWidget } from '../../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
+import { DiffEditorWidget } from '../../../../../../editor/browser/widget/diffEditor/diffEditorWidget.js';
+import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
+import { IModelService } from '../../../../../../editor/common/services/model.js';
+import { ILanguageService } from '../../../../../../editor/common/languages/language.js';
+import { URI } from '../../../../../../base/common/uri.js';
+import { Range } from '../../../../../../editor/common/core/range.js';
 
 function getLanguage(path: string): string {
 	const ext = path.split('.').pop()?.toLowerCase() || '';
@@ -22,54 +31,86 @@ function getLanguage(path: string): string {
 	return map[ext] || 'plaintext';
 }
 
+function makeModelUri(path: string): URI {
+	const safePath = path.replace(/[^a-zA-Z0-9_.\-/]/g, '_').replace(/^\/+/, '');
+	return URI.from({ scheme: 'acp-tool', path: '/' + safePath + '-' + Math.random().toString(36).slice(2, 8) });
+}
+
+function createModel(
+	content: string,
+	path: string,
+	instantiationService: IInstantiationService
+) {
+	const modelService = instantiationService.invokeFunction(accessor => accessor.get(IModelService));
+	const languageService = instantiationService.invokeFunction(accessor => accessor.get(ILanguageService));
+	const language = getLanguage(path);
+	const languageSelection = language ? languageService.createById(language) : null;
+	return modelService.createModel(content, languageSelection, makeModelUri(path));
+}
+
+const commonEditorOptions = {
+	readOnly: true,
+	minimap: { enabled: false },
+	scrollBeyondLastLine: false,
+	scrollBeyondLastColumn: 0,
+	scrollbar: { vertical: 'auto' as const, horizontal: 'auto' as const },
+	lineNumbers: 'on' as const,
+	wordWrap: 'on' as const,
+	automaticLayout: true,
+	fontSize: 12,
+	fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+	padding: { top: 4, bottom: 4 },
+	contextmenu: false,
+	overviewRulerLanes: 0,
+	hideCursorInOverviewRuler: true,
+	renderLineHighlight: 'none' as const,
+	selectOnLineNumbers: false,
+};
+
 // ─── FileReadView (read-only) ────────────────────────────────────────────────
 
 interface FileReadViewOptions {
 	content: string;
 	path: string;
 	maxHeight?: number;
+	instantiationService: IInstantiationService;
 }
 
 export class FileReadView extends Component {
-	private _editor: monaco.editor.IStandaloneCodeEditor | null = null;
+	private _editor: CodeEditorWidget | null = null;
 
 	constructor(options: FileReadViewOptions) {
 		super('div', 'sc-file-read-view');
 		const container = this.append('div', 'sc-file-view-container');
 		const maxHeight = options.maxHeight ?? 300;
 
-		const language = getLanguage(options.path);
-		const model = monaco.editor.createModel(options.content, language);
+		const model = createModel(options.content, options.path, options.instantiationService);
 
-		const editor = monaco.editor.create(container, {
-			model,
-			readOnly: true,
-			minimap: { enabled: false },
-			scrollBeyondLastLine: false,
-			scrollBeyondLastColumn: 0,
-			scrollbar: { vertical: 'auto', horizontal: 'auto' },
-			lineNumbers: 'on',
+		const editor = options.instantiationService.createInstance(CodeEditorWidget, container, {
+			...commonEditorOptions,
 			folding: true,
-			wordWrap: 'on',
-			automaticLayout: true,
-			fontSize: 12,
-			fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-			padding: { top: 4, bottom: 4 },
-			contextmenu: false,
-			overviewRulerLanes: 0,
-			hideCursorInOverviewRuler: true,
-			renderLineHighlight: 'none',
-			selectOnLineNumbers: false,
+		}, {
+			isSimpleWidget: true
 		});
+		editor.setModel(model);
+		editor.layout();
 
 		this._editor = editor;
 
 		const lineCount = model.getLineCount();
-		const height = Math.min(lineCount * 18 + 16, maxHeight);
-		container.style.height = `${Math.max(height, 60)}px`;
+		const estimatedHeight = Math.min(lineCount * 18 + 16, maxHeight);
+		container.style.height = `${Math.max(estimatedHeight, 60)}px`;
+
+		const measureTimer = setTimeout(() => {
+			const contentHeight = editor.getContentHeight();
+			const measured = Math.min(contentHeight + 16, maxHeight);
+			container.style.height = `${Math.max(measured, 60)}px`;
+			editor.layout();
+		}, 50);
 
 		this._register({
 			dispose: () => {
+				clearTimeout(measureTimer);
 				editor.dispose();
 				model.dispose();
 			}
@@ -83,48 +124,37 @@ interface FileWriteViewOptions {
 	content: string;
 	path: string;
 	maxHeight?: number;
+	instantiationService: IInstantiationService;
 }
 
 export class FileWriteView extends Component {
-	private _editor: monaco.editor.IStandaloneCodeEditor | null = null;
+	private _editor: CodeEditorWidget | null = null;
 
 	constructor(options: FileWriteViewOptions) {
 		super('div', 'sc-file-write-view');
 		const container = this.append('div', 'sc-file-view-container');
 		const maxHeight = options.maxHeight ?? 300;
 
-		const language = getLanguage(options.path);
-		const model = monaco.editor.createModel(options.content, language);
+		const model = createModel(options.content, options.path, options.instantiationService);
 
-		const editor = monaco.editor.create(container, {
-			model,
-			readOnly: true,
-			minimap: { enabled: false },
-			scrollBeyondLastLine: false,
-			scrollBeyondLastColumn: 0,
-			scrollbar: { vertical: 'auto', horizontal: 'auto' },
-			lineNumbers: 'on',
+		const editor = options.instantiationService.createInstance(CodeEditorWidget, container, {
+			...commonEditorOptions,
 			folding: false,
-			wordWrap: 'on',
-			automaticLayout: true,
-			fontSize: 12,
-			fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-			padding: { top: 4, bottom: 4 },
-			contextmenu: false,
-			overviewRulerLanes: 0,
-			hideCursorInOverviewRuler: true,
-			renderLineHighlight: 'none',
-			selectOnLineNumbers: false,
+		}, {
+			isSimpleWidget: true
 		});
+		editor.setModel(model);
+		editor.layout();
 
 		this._editor = editor;
 
 		// Add green background decorations for all lines
 		const lineCount = model.getLineCount();
-		model.deltaDecorations([], [
+		editor.deltaDecorations([], [
 			{
-				range: new monaco.Range(1, 1, lineCount, model.getLineMaxColumn(lineCount)),
+				range: new Range(1, 1, lineCount, model.getLineMaxColumn(lineCount)),
 				options: {
+					description: 'file-write-green-line',
 					isWholeLine: true,
 					className: 'sc-write-view-line',
 					linesDecorationsClassName: 'sc-write-view-glyph',
@@ -132,11 +162,19 @@ export class FileWriteView extends Component {
 			},
 		]);
 
-		const height = Math.min(lineCount * 18 + 16, maxHeight);
-		container.style.height = `${Math.max(height, 60)}px`;
+		const estimatedHeight = Math.min(lineCount * 18 + 16, maxHeight);
+		container.style.height = `${Math.max(estimatedHeight, 60)}px`;
+
+		const measureTimer = setTimeout(() => {
+			const contentHeight = editor.getContentHeight();
+			const measured = Math.min(contentHeight + 16, maxHeight);
+			container.style.height = `${Math.max(measured, 60)}px`;
+			editor.layout();
+		}, 50);
 
 		this._register({
 			dispose: () => {
+				clearTimeout(measureTimer);
 				editor.dispose();
 				model.dispose();
 			}
@@ -151,11 +189,13 @@ interface FileEditViewOptions {
 	afterContent: string;
 	path: string;
 	maxHeight?: number;
+	instantiationService: IInstantiationService;
 }
 
 export class FileEditView extends Component {
-	private _diffEditor: monaco.editor.IStandaloneDiffEditor | null = null;
+	private _diffEditor: DiffEditorWidget | null = null;
 	private _showFullDiff = false;
+	private _heightTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(options: FileEditViewOptions) {
 		super('div', 'sc-file-edit-view');
@@ -179,6 +219,25 @@ export class FileEditView extends Component {
 		const maxHeight = options.maxHeight ?? 400;
 
 		this._rebuildDiffEditor(container, options, maxHeight);
+
+		// Single dispose callback — handles whatever editor is current
+		this._register({
+			dispose: () => {
+				if (this._heightTimer) {
+					clearTimeout(this._heightTimer);
+					this._heightTimer = null;
+				}
+				if (this._diffEditor) {
+					const model = this._diffEditor.getModel();
+					if (model) {
+						model.original?.dispose();
+						model.modified?.dispose();
+					}
+					this._diffEditor.dispose();
+					this._diffEditor = null;
+				}
+			}
+		});
 	}
 
 	private _rebuildDiffEditor(
@@ -186,16 +245,26 @@ export class FileEditView extends Component {
 		options: FileEditViewOptions,
 		maxHeight: number
 	): void {
-		// Dispose old editor
+		// Dispose old editor and models explicitly
 		if (this._diffEditor) {
+			const model = this._diffEditor.getModel();
+			if (model) {
+				model.original?.dispose();
+				model.modified?.dispose();
+			}
 			this._diffEditor.dispose();
+			this._diffEditor = null;
 		}
+		if (this._heightTimer) {
+			clearTimeout(this._heightTimer);
+			this._heightTimer = null;
+		}
+		container.innerHTML = '';
 
-		const language = getLanguage(options.path);
-		const originalModel = monaco.editor.createModel(options.beforeContent, language);
-		const modifiedModel = monaco.editor.createModel(options.afterContent, language);
+		const originalModel = createModel(options.beforeContent, options.path + '-orig', options.instantiationService);
+		const modifiedModel = createModel(options.afterContent, options.path + '-mod', options.instantiationService);
 
-		const diffEditor = monaco.editor.createDiffEditor(container, {
+		const diffEditor = options.instantiationService.createInstance(DiffEditorWidget, container, {
 			originalEditable: false,
 			readOnly: true,
 			minimap: { enabled: false },
@@ -210,6 +279,8 @@ export class FileEditView extends Component {
 			padding: { top: 4, bottom: 4 },
 			contextmenu: false,
 			renderSideBySide: true,
+			useInlineViewWhenSpaceIsLimited: false,
+			renderOverviewRuler: false,
 			diffAlgorithm: 'legacy',
 			hideUnchangedRegions: {
 				enabled: !this._showFullDiff,
@@ -217,28 +288,33 @@ export class FileEditView extends Component {
 				minimumLineCount: 5,
 				revealLineCount: 5,
 			},
-		});
+		}, {});
 
 		diffEditor.setModel({
 			original: originalModel,
 			modified: modifiedModel,
 		});
+		diffEditor.layout();
 
 		this._diffEditor = diffEditor;
 
+		// Initial height estimate
 		const lineCount = Math.max(
 			options.beforeContent.split('\n').length,
 			options.afterContent.split('\n').length
 		);
-		const height = Math.min(lineCount * 18 + 16, maxHeight);
-		container.style.height = `${Math.max(height, 80)}px`;
+		const estimatedHeight = Math.min(lineCount * 18 + 16, maxHeight);
+		container.style.height = `${Math.max(estimatedHeight, 80)}px`;
 
-		this._register({
-			dispose: () => {
-				diffEditor.dispose();
-				originalModel.dispose();
-				modifiedModel.dispose();
-			}
-		});
+		// Measure actual rendered height after layout
+		this._heightTimer = setTimeout(() => {
+			const contentHeight = Math.max(
+				diffEditor.getOriginalEditor().getContentHeight(),
+				diffEditor.getModifiedEditor().getContentHeight()
+			);
+			const measured = Math.min(contentHeight + 16, maxHeight);
+			container.style.height = `${Math.max(measured, 80)}px`;
+			diffEditor.layout();
+		}, 50);
 	}
 }

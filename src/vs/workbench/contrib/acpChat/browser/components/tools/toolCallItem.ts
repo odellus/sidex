@@ -2,6 +2,7 @@ import { Component } from '../base.js';
 import { InlineTerminal } from './inlineTerminal.js';
 import { FileReadView, FileWriteView, FileEditView } from './fileViews.js';
 import type { ToolCallInfo } from './toolCallGroup.js';
+import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 
 /**
  * ToolCallItem renders a single tool call in the chat, dispatching to specialized
@@ -20,9 +21,11 @@ export class ToolCallItem extends Component {
 		rawInput?: Record<string, unknown>;
 		rawOutput?: Record<string, unknown> | string;
 	};
+	private readonly _instantiationService: IInstantiationService;
 
-	constructor(tc: ToolCallInfo) {
+	constructor(tc: ToolCallInfo, instantiationService: IInstantiationService) {
 		super('div', 'sc-tool-call');
+		this._instantiationService = instantiationService;
 		this._tool = tc as ToolCallInfo & {
 			kind?: string;
 			content?: Array<Record<string, unknown>>;
@@ -138,6 +141,47 @@ export class ToolCallItem extends Component {
 			}
 		}
 
+		// Diff content block — renders Monaco diff view for write/edit tools
+		if (blockType === 'diff') {
+			// Skip if a file view is already rendered (write tools render at construction time)
+			if (this._contentEl.querySelector('.sc-file-write-view, .sc-file-edit-view, .sc-file-read-view')) {
+				// Still track the block but don't re-render
+			} else {
+				const path = block.path as string || '';
+				const newText = (block.newText ?? block.new_text) as string || '';
+				const oldText = (block.oldText ?? block.old_text) as string | undefined;
+				const filePath = path || (this._tool.rawInput as Record<string, unknown>)?.path as string || this._tool.name;
+
+				// Clear any fallback raw JSON
+				this._contentEl.querySelectorAll('.sc-tool-raw').forEach(el => el.remove());
+
+			if (oldText) {
+				// Edit tool: show Monaco diff
+				const header = this._contentEl.appendChild(document.createElement('div'));
+				header.className = 'sc-file-label';
+				header.innerHTML = `<span class="sc-file-icon">🔄</span> <code>${filePath}</code>`;
+
+				const view = new FileEditView({
+						beforeContent: oldText,
+						afterContent: newText,
+						path: filePath,
+						instantiationService: this._instantiationService,
+					});
+					view.appendTo(this._contentEl);
+					this._register(view);
+			} else {
+				// Write tool: show green new-file view
+				const header = this._contentEl.appendChild(document.createElement('div'));
+				header.className = 'sc-file-label';
+				header.innerHTML = `<span class="sc-file-icon">✏️</span> <code>${filePath}</code>`;
+
+				const view = new FileWriteView({ content: newText, path: filePath, instantiationService: this._instantiationService });
+					view.appendTo(this._contentEl);
+					this._register(view);
+				}
+			}
+		}
+
 		// Track the block
 		if (!this._tool.content) this._tool.content = [];
 		this._tool.content.push(block);
@@ -208,9 +252,9 @@ export class ToolCallItem extends Component {
 			if (fileContent) {
 				const header = this._contentEl.appendChild(document.createElement('div'));
 				header.className = 'sc-file-label';
-				header.innerHTML = `<span class="sc-file-icon">📄</span> Read <code>${filePath}</code>`;
+				header.innerHTML = `<span class="sc-file-icon">📄</span> <code>${filePath}</code>`;
 
-				const view = new FileReadView({ content: fileContent, path: filePath });
+				const view = new FileReadView({ content: fileContent, path: filePath, instantiationService: this._instantiationService });
 				view.appendTo(this._contentEl);
 				this._register(view);
 			}
@@ -225,18 +269,19 @@ export class ToolCallItem extends Component {
 			if (fileContent) {
 				const header = this._contentEl.appendChild(document.createElement('div'));
 				header.className = 'sc-file-label';
-				header.innerHTML = `<span class="sc-file-icon">✏️</span> Write <code>${filePath}</code>`;
+				header.innerHTML = `<span class="sc-file-icon">✏️</span> <code>${filePath}</code>`;
 
 				if (oldText && oldText !== fileContent) {
 					const view = new FileEditView({
 						beforeContent: oldText,
 						afterContent: fileContent,
 						path: filePath,
+						instantiationService: this._instantiationService,
 					});
 					view.appendTo(this._contentEl);
 					this._register(view);
 				} else {
-					const view = new FileWriteView({ content: fileContent, path: filePath });
+					const view = new FileWriteView({ content: fileContent, path: filePath, instantiationService: this._instantiationService });
 					view.appendTo(this._contentEl);
 					this._register(view);
 				}
@@ -251,16 +296,19 @@ export class ToolCallItem extends Component {
 			if (newText && oldText) {
 				const header = this._contentEl.appendChild(document.createElement('div'));
 				header.className = 'sc-file-label';
-				header.innerHTML = `<span class="sc-file-icon">🔄</span> Diff <code>${filePath}</code>`;
+				header.innerHTML = `<span class="sc-file-icon">🔄</span> <code>${filePath}</code>`;
 
 				const view = new FileEditView({
 					beforeContent: oldText,
 					afterContent: newText,
 					path: filePath,
+					instantiationService: this._instantiationService,
 				});
 				view.appendTo(this._contentEl);
 				this._register(view);
 			}
+			// Don't fall through to raw JSON fallback for edit tools —
+			// diff content arrives in tool_call_update and is handled by appendContentBlock
 			return;
 		}
 
