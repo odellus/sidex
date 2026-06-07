@@ -40,7 +40,7 @@ export interface IAcpChatService {
 
 	// Actions
 	connect(): Promise<void>;
-	sendMessage(text: string): void;
+	sendMessage(text: string, blocks?: ContentBlock[]): void;
 	stopStreaming(): void;
 	setMode(mode: string): void;
 	clearMessages(): void;
@@ -135,8 +135,8 @@ class AcpChatServiceImpl implements IAcpChatService {
 		console.error('[acpChatService] connect failed after 3 attempts:', lastError);
 	}
 
-	sendMessage(text: string): void {
-		this._store.sendMessage(text);
+	sendMessage(text: string, blocks?: ContentBlock[]): void {
+		this._store.sendMessage(text, blocks);
 	}
 
 	stopStreaming(): void {

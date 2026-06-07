@@ -238,10 +238,13 @@ export class AcpStore {
 
 	// ─── Prompt ────────────────────────────────────────────────────────────
 
-	async sendMessage(text: string): Promise<void> {
+	async sendMessage(text: string, contentBlocks?: ContentBlock[]): Promise<void> {
 		if (!this._sessionId) { return; }
 
 		this._setStreaming(true);
+
+		// Use provided blocks or create text block from string
+		const blocks: ContentBlock[] = contentBlocks || [{ type: 'text' as const, text }];
 
 		// Add user message notification immediately for instant feedback
 		const userNotification: AcpNotification = {
@@ -250,14 +253,12 @@ export class AcpStore {
 			data: {
 				update: {
 					sessionUpdate: 'user_message_chunk',
-					content: { text },
+					content: { text, blocks },
 				},
 			},
 		};
 		this._notifications = [...this._notifications, userNotification];
 		this._onDidChangeNotifications.fire();
-
-		const blocks: ContentBlock[] = [{ type: 'text' as const, text }];
 
 		try {
 			await invoke('acp_chat_prompt', {

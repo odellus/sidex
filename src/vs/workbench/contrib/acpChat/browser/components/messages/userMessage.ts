@@ -1,4 +1,5 @@
 import { Component } from '../base.js';
+import { renderMarkdown } from '../markdownRenderer.js';
 import type { AcpNotification } from '../../acp-utils.js';
 
 export class UserMessage extends Component {
@@ -15,7 +16,7 @@ export class UserMessage extends Component {
 		const content = update.content as { text?: string } | undefined;
 		const text = content?.text || '';
 		this._text += text;
-		this._contentEl.textContent = this._text;
+		this._contentEl.innerHTML = renderMarkdown(this._text);
 	}
 
 	stopStreaming(): void {

@@ -102,8 +102,8 @@ export class AcpChatViewPane extends ViewPane {
 	}
 
 	private _bindEvents(): void {
-		this._viewDisposables.add(this._input.onSend(text => {
-			this.chatService.sendMessage(text);
+		this._viewDisposables.add(this._input.onSendBlocks(blocks => {
+			this.chatService.sendMessage('', blocks);
 		}));
 		this._viewDisposables.add(this._input.onStop(() => this.chatService.stopStreaming()));
 		this._viewDisposables.add(this._input.onModeChange(mode => this.chatService.setMode(mode)));

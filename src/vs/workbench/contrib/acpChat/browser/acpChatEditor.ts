@@ -218,8 +218,8 @@ export class AcpChatEditor extends EditorPane {
 		this._sessionDisposables.clear();
 
 		this._sessionDisposables.add(
-			this._chatInput.onSend(text => {
-				store.sendMessage(text);
+			this._chatInput.onSendBlocks(blocks => {
+				store.sendMessage('', blocks);
 			})
 		);
 		this._sessionDisposables.add(this._chatInput.onStop(() => store.stopStreaming()));
