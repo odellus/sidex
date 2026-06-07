@@ -246,6 +246,17 @@ export class AcpStore {
 		// Use provided blocks or create text block from string
 		const blocks: ContentBlock[] = contentBlocks || [{ type: 'text' as const, text }];
 
+		// Reconstruct text from blocks if not provided
+		const displayText = text || blocks.map(b => {
+			if (b.type === 'text') return (b as { text: string }).text;
+			if (b.type === 'image') return '![Image]';
+			if (b.type === 'resource_link') {
+				const link = b as { uri: string; name: string };
+				return `[@${link.name}](${link.uri})`;
+			}
+			return '';
+		}).join('');
+
 		// Add user message notification immediately for instant feedback
 		const userNotification: AcpNotification = {
 			id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -253,7 +264,7 @@ export class AcpStore {
 			data: {
 				update: {
 					sessionUpdate: 'user_message_chunk',
-					content: { text, blocks },
+					content: { text: displayText, blocks },
 				},
 			},
 		};
