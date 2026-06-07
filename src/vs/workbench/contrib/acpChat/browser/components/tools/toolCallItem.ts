@@ -15,6 +15,7 @@ export class ToolCallItem extends Component {
 	private _headerEl: HTMLElement;
 	private _contentEl: HTMLElement;
 	private _statusEl: HTMLElement;
+	private _statusIconEl: HTMLElement;
 	private _open = true;
 	private _inlineTerminal: InlineTerminal | null = null;
 	private _tool: ToolCallInfo & {
@@ -50,10 +51,6 @@ export class ToolCallItem extends Component {
 		this._headerEl = this.append('div', 'sc-tool-call-header');
 		this._headerEl.onclick = () => this._toggle();
 
-		const iconEl = this._headerEl.appendChild(document.createElement('span'));
-		iconEl.className = 'sc-tool-call-icon';
-		iconEl.textContent = this._getStatusIcon(tc.status);
-
 		const nameEl = this._headerEl.appendChild(document.createElement('code'));
 		nameEl.className = 'sc-tool-call-name';
 		nameEl.textContent = this._getDisplayName();
@@ -79,6 +76,11 @@ export class ToolCallItem extends Component {
 		this._statusEl = this._headerEl.appendChild(document.createElement('span'));
 		this._statusEl.className = 'sc-tool-call-status';
 		this._updateStatusElement(tc.status);
+
+		// Status icon (codicon) - positioned after status text, before chevron
+		this._statusIconEl = this._headerEl.appendChild(document.createElement('span'));
+		this._statusIconEl.className = 'sc-tool-call-status-icon codicon';
+		this._updateStatusIcon(tc.status);
 
 		const chevronEl = this._headerEl.appendChild(document.createElement('span'));
 		chevronEl.className = 'sc-tool-call-chevron';
@@ -124,20 +126,19 @@ export class ToolCallItem extends Component {
 			titleLower.startsWith('read/');
 	}
 
-	private _getStatusIcon(status: string): string {
-		switch (status) {
-			case 'completed': return '✅';
-			case 'error':
-			case 'failed': return '❌';
-			default: return '⏳';
-		}
-	}
-
 	updateStatus(status: string): void {
 		this._updateStatusElement(status);
-		const iconEl = this._headerEl.querySelector('.sc-tool-call-icon');
-		if (iconEl) {
-			iconEl.textContent = this._getStatusIcon(status);
+		this._updateStatusIcon(status);
+	}
+
+	private _updateStatusIcon(status: string): void {
+		this._statusIconEl.className = 'sc-tool-call-status-icon codicon';
+		if (status === 'running' || status === 'in_progress' || status === 'pending') {
+			this._statusIconEl.classList.add('codicon-loading', 'codicon-modifier-spin');
+		} else if (status === 'error' || status === 'failed') {
+			this._statusIconEl.classList.add('codicon-error');
+		} else if (status === 'completed') {
+			this._statusIconEl.classList.add('codicon-check');
 		}
 	}
 
@@ -270,7 +271,7 @@ export class ToolCallItem extends Component {
 			this._statusEl.textContent = 'pending';
 			this._statusEl.classList.add('running');
 		} else {
-			this._statusEl.textContent = '✓';
+			this._statusEl.textContent = '';
 			this._statusEl.classList.add('done');
 		}
 	}
