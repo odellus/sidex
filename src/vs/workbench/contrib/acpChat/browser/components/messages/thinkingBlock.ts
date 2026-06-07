@@ -1,4 +1,5 @@
-import { Component, $, DOM, escapeHtml } from '../base.js';
+import { Component, $, DOM } from '../base.js';
+import { renderMarkdown, renderMermaidDiagrams } from '../markdownRenderer.js';
 import type { AcpNotification } from '../../acp-utils.js';
 
 export class ThinkingBlock extends Component {
@@ -9,6 +10,8 @@ export class ThinkingBlock extends Component {
 	private _streaming = false;
 	private _startTime = Date.now();
 	private _timerHandle: ReturnType<typeof setInterval> | null = null;
+	private _text = '';
+	private _mermaidTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor() {
 		super('div', 'sc-thinking-block');
@@ -17,7 +20,7 @@ export class ThinkingBlock extends Component {
 		const left = DOM.append(this._headerEl, $('span.sc-thinking-header-left'));
 
 		this._indicatorEl = DOM.append(left, $('span.sc-thinking-indicator'));
-		DOM.append(left, $('span.sc-thinking-label')).textContent = 'Thinking';
+		DOM.append(left, $('span.sc-thinking-label')).textContent = '💭 thinking';
 
 		this._elapsedEl = DOM.append(this._headerEl, $('span.sc-thinking-elapsed'));
 
@@ -28,8 +31,10 @@ export class ThinkingBlock extends Component {
 		const update = notification.data.update;
 		const content = update.content as { text?: string } | undefined;
 		const text = content?.text || '';
-		this.appendContent(text);
-		// Auto-start streaming if not already started
+		this._text += text;
+		this._contentEl.innerHTML = renderMarkdown(this._text);
+		if (this._mermaidTimer) { clearTimeout(this._mermaidTimer); }
+		this._mermaidTimer = setTimeout(() => renderMermaidDiagrams(this._contentEl), 200);
 		if (!this._streaming) {
 			this.startStreaming();
 		}
@@ -41,12 +46,6 @@ export class ThinkingBlock extends Component {
 		this.element.classList.add('streaming');
 		this._timerHandle = setInterval(() => this._updateElapsed(), 1000);
 		this._updateElapsed();
-	}
-
-	appendContent(text: string): void {
-		const escaped = escapeHtml(text);
-		this._contentEl.innerHTML += escaped.replace(/\n/g, '<br>');
-		this._contentEl.scrollTop = this._contentEl.scrollHeight;
 	}
 
 	stopStreaming(): void {
@@ -62,11 +61,11 @@ export class ThinkingBlock extends Component {
 	private _updateElapsed(): void {
 		const elapsed = Math.round((Date.now() - this._startTime) / 1000);
 		if (elapsed < 60) {
-			this._elapsedEl.textContent = `${elapsed}s`;
+			this._elapsedEl.textContent = `(${elapsed}s)`;
 		} else {
 			const m = Math.floor(elapsed / 60);
 			const s = elapsed % 60;
-			this._elapsedEl.textContent = s > 0 ? `${m}m ${s}s` : `${m}m`;
+			this._elapsedEl.textContent = s > 0 ? `(${m}m ${s}s)` : `(${m}m)`;
 		}
 	}
 
@@ -74,6 +73,9 @@ export class ThinkingBlock extends Component {
 		if (this._timerHandle) {
 			clearInterval(this._timerHandle);
 			this._timerHandle = null;
+		}
+		if (this._mermaidTimer) {
+			clearTimeout(this._mermaidTimer);
 		}
 		super.dispose();
 	}

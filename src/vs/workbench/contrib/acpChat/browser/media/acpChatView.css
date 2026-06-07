@@ -1544,32 +1544,31 @@
 
 /* ===== Thinking Block ===== */
 .sc-thinking-block {
-	border: 1px solid var(--vscode-widget-border);
-	border-radius: 6px;
-	margin: 0 0 8px;
-	overflow: hidden;
+	margin: 0 0 12px;
+	padding-left: 12px;
+	border-left: 2px solid var(--vscode-descriptionForeground);
+	opacity: 0.85;
 }
 
 .sc-thinking-header {
-	display: flex;
+	display: inline-flex;
 	align-items: center;
-	justify-content: space-between;
-	padding: 6px 12px;
-	user-select: none;
-	font-size: 12px;
+	gap: 6px;
+	font-size: 11px;
 	color: var(--vscode-descriptionForeground);
-	background: transparent;
+	margin-bottom: 4px;
+	user-select: none;
 }
 
 .sc-thinking-header-left {
-	display: flex;
+	display: inline-flex;
 	align-items: center;
-	gap: 6px;
+	gap: 4px;
 }
 
 .sc-thinking-label {
-	font-size: 12px;
-	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	font-style: italic;
 }
 
 .sc-thinking-indicator {
@@ -1597,26 +1596,48 @@
 }
 
 .sc-thinking-content {
-	max-height: 300px;
-	overflow-y: auto;
-	padding: 8px 12px;
-	border-top: 1px solid var(--vscode-widget-border);
-	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
-	font-size: 12px;
-	line-height: 1.5;
+	font-size: 13px;
+	line-height: 1.65;
 	color: var(--vscode-descriptionForeground);
-	background: rgba(0, 0, 0, 0.04);
-	white-space: pre-wrap;
 	word-wrap: break-word;
 }
 
-.sc-thinking-content::-webkit-scrollbar {
-	width: 4px;
+.sc-thinking-content p {
+	margin: 6px 0;
 }
 
-.sc-thinking-content::-webkit-scrollbar-thumb {
-	background: var(--vscode-scrollbarSlider-background);
-	border-radius: 2px;
+.sc-thinking-content p:first-child {
+	margin-top: 0;
+}
+
+.sc-thinking-content p:last-child {
+	margin-bottom: 0;
+}
+
+.sc-thinking-content code:not(pre code) {
+	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
+	font-size: 12px;
+	background: var(--vscode-textPreformat-background, var(--vscode-textCodeBlock-background));
+	color: var(--vscode-textPreformat-foreground, var(--vscode-foreground));
+	padding: 1px 5px;
+	border-radius: 3px;
+}
+
+.sc-thinking-content pre {
+	background: var(--vscode-textCodeBlock-background);
+	border-radius: 4px;
+	padding: 8px 10px;
+	margin: 6px 0;
+	overflow-x: auto;
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+.sc-thinking-content pre code {
+	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
+	font-size: 12px;
+	background: transparent;
+	padding: 0;
 }
 
 /* ===== Inline Diff View ===== */
