@@ -145,6 +145,9 @@ export class AcpChatEditor extends EditorPane {
 		if (this._acpStore.connectionStatus === 'disconnected') {
 			await this._connect();
 		}
+
+		// Update session info in header
+		this._header.setSessionInfo(this._acpStore.sessionId, this._acpStore.connectionStatus);
 	}
 
 	override clearInput(): void {
@@ -269,6 +272,7 @@ export class AcpChatEditor extends EditorPane {
 				if (store.connectionStatus === 'connected' || store.connectionStatus === 'ready') {
 					this._fetchSessions();
 				}
+				this._header.setSessionInfo(store.sessionId, store.connectionStatus);
 			})
 		);
 		this._sessionDisposables.add(

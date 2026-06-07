@@ -20,6 +20,9 @@ export interface IAcpChatService {
 	// Workspace root
 	readonly cwd: string;
 
+	// Session ID
+	readonly sessionId: string;
+
 	// Connection state
 	readonly connectionState: ConnectionStatus;
 
@@ -64,6 +67,7 @@ class AcpChatServiceImpl implements IAcpChatService {
 	private _cwd: string = '';
 
 	get cwd(): string { return this._cwd; }
+	get sessionId(): string { return this._store.sessionId; }
 
 	private readonly _onDidChangeNotifications = new Emitter<void>();
 	readonly onDidChangeNotifications = this._onDidChangeNotifications.event;

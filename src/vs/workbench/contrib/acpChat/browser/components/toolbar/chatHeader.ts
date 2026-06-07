@@ -28,6 +28,11 @@ export class ChatHeader extends Component {
 	private readonly _onMenuAction = this._register(new Emitter<string>());
 	readonly onMenuAction: Event<string> = this._onMenuAction.event;
 
+	private _sessionInfoEl: HTMLElement;
+	private _sessionStatusEl: HTMLElement;
+	private _sessionIdEl: HTMLElement;
+	private _sessionCopyBtn: HTMLElement;
+	private _sessionCopyIcon: HTMLElement;
 	private _historyPanel: HTMLElement;
 	private _historyList: HTMLElement;
 	private _menuPanel: HTMLElement;
@@ -36,6 +41,32 @@ export class ChatHeader extends Component {
 
 	constructor() {
 		super('div', 'sc-header');
+
+		// Session info (left side)
+		this._sessionInfoEl = this.append('div', 'sc-session-info');
+		this._sessionStatusEl = DOM.append(this._sessionInfoEl, $('span.sc-session-status'));
+		this._sessionIdEl = DOM.append(this._sessionInfoEl, $('span.sc-session-id'));
+		this._sessionIdEl.textContent = 'No session';
+
+		this._sessionCopyBtn = DOM.append(this._sessionInfoEl, $('button.sc-session-copy'));
+		this._sessionCopyBtn.title = 'Copy session ID';
+		this._sessionCopyIcon = this._sessionCopyBtn.appendChild(icon(Codicon.copy));
+		this.on(this._sessionCopyBtn, 'click', async (e) => {
+			e.stopPropagation();
+			const text = this._sessionIdEl.textContent;
+			if (!text || text === 'No session') { return; }
+			try {
+				await navigator.clipboard.writeText(text);
+				this._sessionCopyBtn.classList.add('copied');
+				this._sessionCopyBtn.replaceChildren(icon(Codicon.check));
+				setTimeout(() => {
+					this._sessionCopyBtn.classList.remove('copied');
+					this._sessionCopyBtn.replaceChildren(icon(Codicon.copy));
+				}, 1500);
+			} catch {
+				// ignore
+			}
+		});
 
 		const actions = this.append('div', 'sc-header-actions');
 
@@ -112,6 +143,28 @@ export class ChatHeader extends Component {
 		this._briefTimer = setTimeout(() => {
 			this._briefEl.classList.remove('visible');
 		}, 5000);
+	}
+
+	setSessionInfo(sessionId: string | undefined, connectionStatus: string): void {
+		// Update status indicator
+		this._sessionStatusEl.className = 'sc-session-status';
+		if (connectionStatus === 'ready' && sessionId) {
+			this._sessionStatusEl.classList.add('connected');
+		} else if (connectionStatus === 'connecting') {
+			this._sessionStatusEl.classList.add('connecting');
+		} else {
+			this._sessionStatusEl.classList.add('disconnected');
+		}
+
+		// Update session ID text
+		if (sessionId) {
+			this._sessionIdEl.textContent = sessionId;
+			this._sessionCopyBtn.style.display = '';
+		} else {
+			this._sessionIdEl.textContent = 'No session';
+			this._sessionIdEl.title = '';
+			this._sessionCopyBtn.style.display = 'none';
+		}
 	}
 
 	setSessions(sessions: ISessionItem[]): void {

@@ -152,6 +152,7 @@ export class AcpChatViewPane extends ViewPane {
 			} else {
 				this._connectingBar.classList.remove('visible');
 			}
+			this._updateSessionInfo();
 		}));
 
 		this._viewDisposables.add(this.chatService.onDidChangeConfigOptions(options => {
@@ -190,6 +191,10 @@ export class AcpChatViewPane extends ViewPane {
 				});
 			}
 		}));
+	}
+
+	private _updateSessionInfo(): void {
+		this._header.setSessionInfo(this.chatService.sessionId, this.chatService.connectionState);
 	}
 
 	private _onNotificationAdded(): void {

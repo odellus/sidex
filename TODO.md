@@ -7,13 +7,12 @@
 - ~~Model selection in chat~~
 - ~~Make all text in chat brighter. it's a dark theme. can barely see text right now. too muted.~~
 - ~~Add resume session logic to chat history so you can reload old sessions~~
-
-- Pull thinking tokens out of the weird scrollable box they're in and enable syntax highlighting for their thoughts
+- ~~Pull thinking tokens out of the weird scrollable box they're in and enable syntax highlighting for their thoughts~~
 - Log to `~/.local/share/crow/acp.log` and find all instances where we still log to some sidex directory to rename to crow
 - Add katex to rendering in chat
 - Moving off of window should not prevent information streamed from the backend from being displayed. You should be able to move between windows and see response from different chats.
 - Moving back to previously viewed window the focus should be on the very bottom of the chat
-- Include the session-id once it is selected at the top
+- ~~Include the session-id once it is selected at the top~~
 
 ### Rich Text Editor
 
