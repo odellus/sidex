@@ -56,6 +56,27 @@ export class InlineTerminal extends Component {
 		titleEl.className = 'sc-inline-terminal-title';
 		titleEl.textContent = `$ ${options.commandLabel}`;
 
+		// Copy command button
+		const copyBtn = this._headerEl.appendChild(document.createElement('button'));
+		copyBtn.className = 'sc-tool-copy-btn';
+		copyBtn.title = 'Copy command';
+		copyBtn.textContent = '📋';
+		copyBtn.onclick = (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			navigator.clipboard.writeText(options.commandLabel).then(() => {
+				copyBtn.textContent = '✓';
+				setTimeout(() => {
+					copyBtn.textContent = '📋';
+				}, 1500);
+			}).catch(() => {
+				copyBtn.textContent = '✗';
+				setTimeout(() => {
+					copyBtn.textContent = '📋';
+				}, 1500);
+			});
+		};
+
 		if (options.cwd) {
 			const cwdEl = this._headerEl.appendChild(document.createElement('span'));
 			cwdEl.className = 'sc-inline-terminal-cwd';

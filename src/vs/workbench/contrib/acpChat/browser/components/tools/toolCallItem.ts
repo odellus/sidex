@@ -72,6 +72,8 @@ export class ToolCallItem extends Component {
 			};
 		}
 
+		// For terminal tools, nothing in the header (copy button is inside the terminal)
+
 		this._statusEl = this._headerEl.appendChild(document.createElement('span'));
 		this._statusEl.className = 'sc-tool-call-status';
 		this._updateStatusElement(tc.status);
@@ -91,9 +93,16 @@ export class ToolCallItem extends Component {
 		const kind = this._tool.kind || '';
 		const title = this._tool.name || kind || 'Tool call';
 
-		// For terminal/execute tools, the title IS the command (from agent's tool_call start)
+		// For terminal/execute tools, show "Terminal" or cwd instead of the full command
 		if (kind === 'execute' || this._isTerminal()) {
-			return `$ ${title}`;
+			const rawInput = (this._tool.rawInput as Record<string, unknown>) || {};
+			const cwd = rawInput.cwd as string;
+			if (cwd) {
+				// Show just the last directory name
+				const parts = cwd.split('/');
+				return `Terminal: ${parts[parts.length - 1] || 'root'}`;
+			}
+			return 'Terminal';
 		}
 
 		// For file tools, strip the path from the title since we show it as a link
@@ -177,7 +186,6 @@ export class ToolCallItem extends Component {
 					// Clear any raw pre that might have been added
 					this._contentEl.querySelectorAll('.sc-tool-raw').forEach(el => el.remove());
 
-					this._contentEl.appendChild(this._createFileHeader('📄', filePath));
 					const view = new FileReadView({ content: text, path: filePath, instantiationService: this._instantiationService });
 					view.appendTo(this._contentEl);
 					this._register(view);
@@ -205,8 +213,6 @@ export class ToolCallItem extends Component {
 
 			if (oldText) {
 				// Edit tool: show Monaco diff
-				this._contentEl.appendChild(this._createFileHeader('🔄', filePath));
-
 				const view = new FileEditView({
 						beforeContent: oldText,
 						afterContent: newText,
@@ -217,8 +223,6 @@ export class ToolCallItem extends Component {
 					this._register(view);
 			} else {
 				// Write tool: show green new-file view
-				this._contentEl.appendChild(this._createFileHeader('✏️', filePath));
-
 				const view = new FileWriteView({ content: newText, path: filePath, instantiationService: this._instantiationService });
 					view.appendTo(this._contentEl);
 					this._register(view);
@@ -257,29 +261,6 @@ export class ToolCallItem extends Component {
 			rawInput.file_path as string ||
 			rawInput.filePath as string ||
 			rawInput.file as string) || null;
-	}
-
-	private _createFileHeader(icon: string, filePath: string): HTMLElement {
-		const header = document.createElement('div');
-		header.className = 'sc-file-label';
-
-		const iconEl = header.appendChild(document.createElement('span'));
-		iconEl.className = 'sc-file-icon';
-		iconEl.textContent = icon;
-
-		const linkEl = header.appendChild(document.createElement('a'));
-		linkEl.className = 'sc-file-path';
-		linkEl.textContent = filePath;
-		linkEl.href = '#';
-		linkEl.title = `Open ${filePath}`;
-		linkEl.onclick = (e) => {
-			e.preventDefault();
-			e.stopPropagation();
-			const editorService = this._instantiationService.invokeFunction(a => a.get(IEditorService));
-			editorService.openEditor({ resource: URI.file(filePath) });
-		};
-
-		return header;
 	}
 
 	private _updateStatusElement(status: string): void {
@@ -345,8 +326,6 @@ export class ToolCallItem extends Component {
 			}
 
 			if (fileContent) {
-				this._contentEl.appendChild(this._createFileHeader('📄', filePath));
-
 				const view = new FileReadView({ content: fileContent, path: filePath, instantiationService: this._instantiationService });
 				view.appendTo(this._contentEl);
 				this._register(view);
@@ -360,8 +339,6 @@ export class ToolCallItem extends Component {
 			const fileContent = newText || rawInput.content as string || '';
 
 			if (fileContent) {
-				this._contentEl.appendChild(this._createFileHeader('✏️', filePath));
-
 				if (oldText && oldText !== fileContent) {
 					const view = new FileEditView({
 						beforeContent: oldText,
@@ -385,8 +362,6 @@ export class ToolCallItem extends Component {
 			const filePath = this._getFilePath(rawInput, diffPath);
 
 			if (newText && oldText) {
-				this._contentEl.appendChild(this._createFileHeader('🔄', filePath));
-
 				const view = new FileEditView({
 					beforeContent: oldText,
 					afterContent: newText,

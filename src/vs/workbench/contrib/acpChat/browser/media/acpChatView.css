@@ -659,6 +659,29 @@
 	text-decoration: underline;
 }
 
+.sc-tool-copy-btn {
+	background: transparent;
+	border: none;
+	cursor: pointer;
+	padding: 2px 6px;
+	font-size: 12px;
+	line-height: 1;
+	border-radius: 3px;
+	opacity: 0.6;
+	transition: opacity 0.15s, background 0.15s;
+	flex-shrink: 0;
+}
+
+.sc-tool-copy-btn:hover {
+	opacity: 1;
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.sc-tool-copy-btn:active {
+	opacity: 1;
+	background: var(--vscode-toolbar-activeBackground);
+}
+
 .sc-tool-call-status {
 	font-size: 10px;
 	flex-shrink: 0;

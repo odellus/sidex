@@ -75,3 +75,5 @@ graph TD
 ## CROW-CLI SPECIFIC CHANGES
 
 - Do we want to make modifying crow-cli and crow-mcp like the core use case of this bad-boy?
+
+- ~~be a fucking badass~~
