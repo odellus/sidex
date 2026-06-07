@@ -439,7 +439,7 @@ export class AcpChatEditor extends EditorPane {
 			this._header.setSessions(
 				sessions.map(s => ({
 					id: s.id,
-					title: s.title,
+					displayId: s.displayId,
 					updated_at: new Date(s.date).toISOString()
 				}))
 			);

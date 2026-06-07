@@ -118,7 +118,6 @@ export class AcpChatViewPane extends ViewPane {
 		}));
 
 		this._viewDisposables.add(this._header.onSelectSession(sessionId => {
-			console.log('[acpChatView] onSelectSession fired with:', sessionId);
 			this.chatService.loadSession(sessionId).catch(e => {
 				console.error('[acpChatView] loadSession failed:', e);
 			});
@@ -303,7 +302,7 @@ export class AcpChatViewPane extends ViewPane {
 			const sessions = await this.chatService.getSavedSessions();
 			this._header.setSessions(sessions.map(s => ({
 				id: s.id,
-				title: s.title,
+				displayId: s.displayId,
 				updated_at: new Date(s.date).toISOString(),
 			})));
 		} catch (e) {

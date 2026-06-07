@@ -11,7 +11,7 @@ function icon(codicon: ThemeIcon): HTMLSpanElement {
 
 export interface ISessionItem {
 	id: string;
-	title: string;
+	displayId: string;
 	updated_at?: string;
 }
 
@@ -177,9 +177,9 @@ export class ChatHeader extends Component {
 		for (const s of sessions) {
 			const row = DOM.append(this._historyList, $('div.sc-history-item'));
 			row.dataset.id = s.id;
-			row.dataset.title = (s.title || '').toLowerCase();
+			row.dataset.title = (s.displayId || '').toLowerCase();
 			const titleEl = DOM.append(row, $('span.sc-history-title'));
-			titleEl.textContent = s.title || 'Untitled';
+			titleEl.textContent = s.displayId;
 			if (s.updated_at) {
 				const dateEl = DOM.append(row, $('span.sc-history-date'));
 				dateEl.textContent = new Date(s.updated_at).toLocaleDateString();

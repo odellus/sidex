@@ -324,19 +324,26 @@ export class AcpStore {
 
 	// ─── Session history ───────────────────────────────────────────────────
 
-	async listSessions(cwd: string): Promise<{ id: string; title: string; date: number }[]> {
+	async listSessions(cwd: string): Promise<{ id: string; displayId: string; date: number }[]> {
 		if (!this._sessionId) { return []; }
 		try {
 			const result = await invoke<{ sessions?: { sessionId: string; title?: string; updatedAt?: string }[] }>('acp_chat_list_sessions', {
 				request: { session_id: this._sessionId, cwd },
 			});
-			console.log('[acpStore] listSessions raw result:', JSON.stringify(result));
-			const sessions = (result.sessions || []).map((s: { sessionId: string; title?: string; updatedAt?: string }) => ({
-				id: s.sessionId,
-				title: s.title || s.sessionId.slice(0, 8),
-				date: s.updatedAt ? new Date(s.updatedAt).getTime() : Date.now(),
-			}));
-			console.log('[acpStore] listSessions mapped:', JSON.stringify(sessions));
+			const rawSessions = result.sessions || [];
+			
+			// Count occurrences of each sessionId and assign indices
+			const sessionIdCounts = new Map<string, number>();
+			const sessions = rawSessions.map((s: { sessionId: string; title?: string; updatedAt?: string }) => {
+				const count = (sessionIdCounts.get(s.sessionId) || 0) + 1;
+				sessionIdCounts.set(s.sessionId, count);
+				return {
+					id: s.sessionId,
+					displayId: `${s.sessionId}-${count}`,
+					date: s.updatedAt ? new Date(s.updatedAt).getTime() : Date.now(),
+				};
+			});
+			
 			return sessions;
 		} catch (e) {
 			console.error('[acpStore] listSessions failed:', e);
