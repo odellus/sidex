@@ -1,5 +1,7 @@
 import { Component, $, DOM } from '../base.js';
-import { renderMarkdown, renderMermaidDiagrams } from '../markdownRenderer.js';
+import { DisposableStore } from '../../../../../../base/common/lifecycle.js';
+import { renderMarkdown, renderMermaidDiagrams, renderCodeBlocks } from '../markdownRenderer.js';
+import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 import type { AcpNotification } from '../../acp-utils.js';
 
 export class ThinkingBlock extends Component {
@@ -13,10 +15,13 @@ export class ThinkingBlock extends Component {
 	private _startTime = Date.now();
 	private _timerHandle: ReturnType<typeof setInterval> | null = null;
 	private _text = '';
-	private _mermaidTimer: ReturnType<typeof setTimeout> | undefined;
+	private _renderTimer: ReturnType<typeof setTimeout> | undefined;
+	private _codeBlockDisposables: DisposableStore = new DisposableStore();
+	private readonly _instantiationService: IInstantiationService;
 
-	constructor() {
+	constructor(instantiationService: IInstantiationService) {
 		super('div', 'sc-thinking-block');
+		this._instantiationService = instantiationService;
 
 		this._headerEl = this.append('div', 'sc-thinking-header');
 		this._headerEl.onclick = () => this._toggle();
@@ -39,9 +44,21 @@ export class ThinkingBlock extends Component {
 		const content = update.content as { text?: string } | undefined;
 		const text = content?.text || '';
 		this._text += text;
+
+		if (!this._codeBlockDisposables.isDisposed) {
+			this._codeBlockDisposables.clear();
+		}
 		this._contentEl.innerHTML = renderMarkdown(this._text);
-		if (this._mermaidTimer) { clearTimeout(this._mermaidTimer); }
-		this._mermaidTimer = setTimeout(() => renderMermaidDiagrams(this._contentEl), 200);
+
+		if (this._renderTimer) { clearTimeout(this._renderTimer); }
+		this._renderTimer = setTimeout(() => {
+			renderMermaidDiagrams(this._contentEl);
+			if (!this._codeBlockDisposables.isDisposed) {
+				this._codeBlockDisposables.dispose();
+			}
+			this._codeBlockDisposables = renderCodeBlocks(this._contentEl, this._instantiationService);
+		}, 200);
+
 		if (!this._streaming) {
 			this.startStreaming();
 		}
@@ -101,8 +118,11 @@ export class ThinkingBlock extends Component {
 			clearInterval(this._timerHandle);
 			this._timerHandle = null;
 		}
-		if (this._mermaidTimer) {
-			clearTimeout(this._mermaidTimer);
+		if (this._renderTimer) {
+			clearTimeout(this._renderTimer);
+		}
+		if (!this._codeBlockDisposables.isDisposed) {
+			this._codeBlockDisposables.dispose();
 		}
 		super.dispose();
 	}

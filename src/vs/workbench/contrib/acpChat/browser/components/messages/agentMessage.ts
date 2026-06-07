@@ -1,17 +1,22 @@
 import { Component, DOM, $ } from '../base.js';
 import { Codicon } from '../../../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../../../base/common/themables.js';
-import { renderMarkdown, renderMermaidDiagrams } from '../markdownRenderer.js';
+import { DisposableStore } from '../../../../../../base/common/lifecycle.js';
+import { renderMarkdown, renderMermaidDiagrams, renderCodeBlocks } from '../markdownRenderer.js';
+import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 import type { AcpNotification } from '../../acp-utils.js';
 
 export class AgentMessageGroup extends Component {
 	private _text = '';
 	private _bodyEl: HTMLElement;
 	private _streaming = false;
-	private _mermaidTimer: ReturnType<typeof setTimeout> | undefined;
+	private _renderTimer: ReturnType<typeof setTimeout> | undefined;
+	private _codeBlockDisposables: DisposableStore = new DisposableStore();
+	private readonly _instantiationService: IInstantiationService;
 
-	constructor() {
+	constructor(instantiationService: IInstantiationService) {
 		super('div', 'sc-agent-msg');
+		this._instantiationService = instantiationService;
 
 		this._bodyEl = this.append('div', 'sc-assistant-body');
 
@@ -39,14 +44,35 @@ export class AgentMessageGroup extends Component {
 		const content = update.content as { text?: string } | undefined;
 		const text = content?.text || '';
 		this._text += text;
+
+		// Dispose old code block editors before replacing innerHTML
+		if (!this._codeBlockDisposables.isDisposed) {
+			this._codeBlockDisposables.clear();
+		}
 		this._bodyEl.innerHTML = renderMarkdown(this._text);
 		this._streaming = true;
-		// Defer mermaid rendering until DOM is ready
-		if (this._mermaidTimer) { clearTimeout(this._mermaidTimer); }
-		this._mermaidTimer = setTimeout(() => renderMermaidDiagrams(this._bodyEl), 200);
+
+		// Debounce heavy rendering (mermaid + Monaco code blocks)
+		if (this._renderTimer) { clearTimeout(this._renderTimer); }
+		this._renderTimer = setTimeout(() => {
+			renderMermaidDiagrams(this._bodyEl);
+			// Dispose previous code block editors, then create new ones
+			if (!this._codeBlockDisposables.isDisposed) {
+				this._codeBlockDisposables.dispose();
+			}
+			this._codeBlockDisposables = renderCodeBlocks(this._bodyEl, this._instantiationService);
+		}, 200);
 	}
 
 	stopStreaming(): void {
 		this._streaming = false;
+	}
+
+	override dispose(): void {
+		if (this._renderTimer) { clearTimeout(this._renderTimer); }
+		if (!this._codeBlockDisposables.isDisposed) {
+			this._codeBlockDisposables.dispose();
+		}
+		super.dispose();
 	}
 }

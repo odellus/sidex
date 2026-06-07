@@ -255,17 +255,17 @@ export class AcpChatViewPane extends ViewPane {
 				comp = new UserMessage();
 				break;
 			case 'agent_thought_chunk':
-				comp = new ThinkingBlock();
+				comp = new ThinkingBlock(this.instantiationService);
 				break;
 			case 'agent_message_chunk':
-				comp = new AgentMessageGroup();
+				comp = new AgentMessageGroup(this.instantiationService);
 				break;
 			case 'tool':
 				comp = new ToolCallGroup(this.instantiationService, this.chatService.cwd);
 				break;
 			default:
 				// Fallback to agent message for unknown types
-				comp = new AgentMessageGroup();
+				comp = new AgentMessageGroup(this.instantiationService);
 				break;
 		}
 
