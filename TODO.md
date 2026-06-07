@@ -39,8 +39,8 @@ graph TD
 ```
 ### Tools
 
-- Add diff fixtures for edit and write
-- Add terminal fixture that is a "real terminal" in other words xterm.js
+- ~~Add diff fixtures for edit and write~~
+- ~~Add terminal fixture that is a "real terminal" in other words xterm.js~~
 - Client side tools that do orchestration stuff. Cool orchestration tasks like:
   - `list_sessions` — list all the active sessions open in editor
   - `send` — send a message to another agent session. hooked up to state to say who it called so called agent replies back after react loop to execute task with a tool-less, RESTful summary
