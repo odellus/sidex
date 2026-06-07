@@ -257,7 +257,7 @@ export class AcpChatViewPane extends ViewPane {
 				comp = new AgentMessageGroup();
 				break;
 			case 'tool':
-				comp = new ToolCallGroup(this.instantiationService);
+				comp = new ToolCallGroup(this.instantiationService, this.chatService.cwd);
 				break;
 			default:
 				// Fallback to agent message for unknown types

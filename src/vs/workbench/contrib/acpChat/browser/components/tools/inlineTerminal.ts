@@ -60,19 +60,20 @@ export class InlineTerminal extends Component {
 		const copyBtn = this._headerEl.appendChild(document.createElement('button'));
 		copyBtn.className = 'sc-tool-copy-btn';
 		copyBtn.title = 'Copy command';
-		copyBtn.textContent = '📋';
+		const copyIcon = copyBtn.appendChild(document.createElement('span'));
+		copyIcon.className = 'codicon codicon-copy';
 		copyBtn.onclick = (e) => {
 			e.preventDefault();
 			e.stopPropagation();
 			navigator.clipboard.writeText(options.commandLabel).then(() => {
-				copyBtn.textContent = '✓';
+				copyIcon.className = 'codicon codicon-check';
 				setTimeout(() => {
-					copyBtn.textContent = '📋';
+					copyIcon.className = 'codicon codicon-copy';
 				}, 1500);
 			}).catch(() => {
-				copyBtn.textContent = '✗';
+				copyIcon.className = 'codicon codicon-error';
 				setTimeout(() => {
-					copyBtn.textContent = '📋';
+					copyIcon.className = 'codicon codicon-copy';
 				}, 1500);
 			});
 		};

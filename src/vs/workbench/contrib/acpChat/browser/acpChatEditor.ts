@@ -398,7 +398,7 @@ export class AcpChatEditor extends EditorPane {
 				break;
 		case 'tool_call':
 		case 'tool_call_update':
-			comp = new ToolCallGroup(this._instantiationService);
+			comp = new ToolCallGroup(this._instantiationService, this._workspaceContext.getWorkspace().folders[0]?.uri?.fsPath || '');
 			break;
 			default:
 				comp = new AgentMessageGroup();

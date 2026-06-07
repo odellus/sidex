@@ -617,12 +617,66 @@
 .sc-tool-call-header {
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	padding: 6px 10px;
+	padding: 4px 8px;
 	cursor: pointer;
-	user-select: none;
-	background: var(--vscode-sideBar-background);
-	border-bottom: 1px solid var(--vscode-editorWidget-border);
+	font-size: 13px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.sc-tool-call-name {
+	font-weight: 500;
+	margin-right: 6px;
+}
+
+.sc-file-path {
+	color: var(--vscode-textLink-foreground);
+	text-decoration: none;
+	font-size: 12px;
+	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
+}
+
+.sc-file-path:hover {
+	text-decoration: underline;
+}
+
+.sc-tool-call-status {
+	margin-left: auto;
+	font-size: 12px;
+}
+
+.sc-tool-call-status.running {
+	color: var(--vscode-descriptionForeground);
+}
+
+.sc-tool-call-status.error {
+	color: var(--vscode-errorForeground);
+}
+
+.sc-tool-call-status.done {
+	color: var(--vscode-testing-iconPassed);
+}
+
+.sc-tool-call-status-icon {
+	margin-left: 4px;
+	font-size: 14px;
+}
+
+.sc-tool-call-status-icon.codicon-check {
+	color: var(--vscode-testing-iconPassed);
+}
+
+.sc-tool-call-status-icon.codicon-error {
+	color: var(--vscode-errorForeground);
+}
+
+.sc-tool-call-status-icon.codicon-loading {
+	color: var(--vscode-descriptionForeground);
+}
+
+.sc-tool-call-chevron {
+	margin-left: 8px;
+	font-size: 10px;
+	transition: transform 0.15s ease;
 }
 
 .sc-tool-call-header:hover {
@@ -1558,6 +1612,12 @@
 	color: var(--vscode-descriptionForeground);
 	margin-bottom: 4px;
 	user-select: none;
+	cursor: pointer;
+	padding-right: 4px;
+}
+
+.sc-thinking-header:hover {
+	color: var(--vscode-foreground);
 }
 
 .sc-thinking-header-left {
@@ -1569,6 +1629,16 @@
 .sc-thinking-label {
 	font-size: 11px;
 	font-style: italic;
+}
+
+.sc-thinking-chevron {
+	font-size: 10px;
+	color: var(--vscode-descriptionForeground);
+	margin-left: auto;
+}
+
+.sc-thinking-block.collapsed .sc-thinking-content {
+	display: none;
 }
 
 .sc-thinking-indicator {

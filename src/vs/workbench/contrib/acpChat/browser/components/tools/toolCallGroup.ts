@@ -20,10 +20,12 @@ export class ToolCallGroup extends Component {
 	private _items: Map<string, ToolCallItem> = new Map();
 	private _toolData: Map<string, Partial<ToolCallInfo>> = new Map();
 	private readonly _instantiationService: IInstantiationService;
+	private readonly _cwd: string;
 
-	constructor(instantiationService: IInstantiationService) {
+	constructor(instantiationService: IInstantiationService, cwd: string = '') {
 		super('div', 'sc-tool-block');
 		this._instantiationService = instantiationService;
+		this._cwd = cwd;
 	}
 
 	appendNotification(notification: AcpNotification): void {
@@ -34,7 +36,7 @@ export class ToolCallGroup extends Component {
 			const tc = this._extractToolCallInfo(update);
 			console.log(`[ToolCallGroup] tool_call: id="${tc.id}" name="${tc.name}" kind="${tc.kind}"`);
 			this._toolData.set(tc.id, tc);
-			const item = new ToolCallItem(tc, this._instantiationService);
+			const item = new ToolCallItem(tc, this._instantiationService, this._cwd);
 			item.appendTo(this.element);
 			this._register(item);
 			this._items.set(tc.id, item);

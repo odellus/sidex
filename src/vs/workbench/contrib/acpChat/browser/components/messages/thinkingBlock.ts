@@ -7,7 +7,9 @@ export class ThinkingBlock extends Component {
 	private readonly _contentEl: HTMLElement;
 	private readonly _indicatorEl: HTMLElement;
 	private readonly _elapsedEl: HTMLElement;
+	private readonly _chevronEl: HTMLElement;
 	private _streaming = false;
+	private _collapsed = false;
 	private _startTime = Date.now();
 	private _timerHandle: ReturnType<typeof setInterval> | null = null;
 	private _text = '';
@@ -17,12 +19,17 @@ export class ThinkingBlock extends Component {
 		super('div', 'sc-thinking-block');
 
 		this._headerEl = this.append('div', 'sc-thinking-header');
+		this._headerEl.onclick = () => this._toggle();
+
 		const left = DOM.append(this._headerEl, $('span.sc-thinking-header-left'));
 
 		this._indicatorEl = DOM.append(left, $('span.sc-thinking-indicator'));
-		DOM.append(left, $('span.sc-thinking-label')).textContent = '💭 thinking';
+		DOM.append(left, $('span.sc-thinking-label')).textContent = 'thinking';
 
 		this._elapsedEl = DOM.append(this._headerEl, $('span.sc-thinking-elapsed'));
+
+		this._chevronEl = DOM.append(this._headerEl, $('span.sc-thinking-chevron'));
+		this._chevronEl.textContent = '▾';
 
 		this._contentEl = this.append('div', 'sc-thinking-content');
 	}
@@ -56,6 +63,26 @@ export class ThinkingBlock extends Component {
 			this._timerHandle = null;
 		}
 		this._updateElapsed();
+		// Auto-collapse after thinking is complete
+		this._collapse();
+	}
+
+	private _toggle(): void {
+		this._collapsed = !this._collapsed;
+		this._contentEl.style.display = this._collapsed ? 'none' : 'block';
+		this._chevronEl.textContent = this._collapsed ? '▸' : '▾';
+		if (this._collapsed) {
+			this.element.classList.add('collapsed');
+		} else {
+			this.element.classList.remove('collapsed');
+		}
+	}
+
+	private _collapse(): void {
+		this._collapsed = true;
+		this._contentEl.style.display = 'none';
+		this._chevronEl.textContent = '▸';
+		this.element.classList.add('collapsed');
 	}
 
 	private _updateElapsed(): void {

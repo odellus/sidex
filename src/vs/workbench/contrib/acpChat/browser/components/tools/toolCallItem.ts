@@ -24,10 +24,12 @@ export class ToolCallItem extends Component {
 		rawOutput?: Record<string, unknown> | string;
 	};
 	private readonly _instantiationService: IInstantiationService;
+	private readonly _cwd: string;
 
-	constructor(tc: ToolCallInfo, instantiationService: IInstantiationService) {
+	constructor(tc: ToolCallInfo, instantiationService: IInstantiationService, cwd: string = '') {
 		super('div', 'sc-tool-call');
 		this._instantiationService = instantiationService;
+		this._cwd = cwd;
 		this._tool = tc as ToolCallInfo & {
 			kind?: string;
 			content?: Array<Record<string, unknown>>;
@@ -93,16 +95,9 @@ export class ToolCallItem extends Component {
 		const kind = this._tool.kind || '';
 		const title = this._tool.name || kind || 'Tool call';
 
-		// For terminal/execute tools, show "Terminal" or cwd instead of the full command
+		// For terminal/execute tools, show the cwd
 		if (kind === 'execute' || this._isTerminal()) {
-			const rawInput = (this._tool.rawInput as Record<string, unknown>) || {};
-			const cwd = rawInput.cwd as string;
-			if (cwd) {
-				// Show just the last directory name
-				const parts = cwd.split('/');
-				return `Terminal: ${parts[parts.length - 1] || 'root'}`;
-			}
-			return 'Terminal';
+			return this._cwd || 'terminal';
 		}
 
 		// For file tools, strip the path from the title since we show it as a link
