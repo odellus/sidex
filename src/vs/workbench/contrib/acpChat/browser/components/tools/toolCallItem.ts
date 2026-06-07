@@ -3,6 +3,8 @@ import { InlineTerminal } from './inlineTerminal.js';
 import { FileReadView, FileWriteView, FileEditView } from './fileViews.js';
 import type { ToolCallInfo } from './toolCallGroup.js';
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
+import { IEditorService } from '../../../../../services/editor/common/editorService.js';
+import { URI } from '../../../../../../base/common/uri.js';
 
 /**
  * ToolCallItem renders a single tool call in the chat, dispatching to specialized
@@ -54,6 +56,22 @@ export class ToolCallItem extends Component {
 		nameEl.className = 'sc-tool-call-name';
 		nameEl.textContent = this._getDisplayName();
 
+		// For file tools, add clickable file path in header
+		const filePath = this._getHeaderFilePath();
+		if (filePath) {
+			const linkEl = this._headerEl.appendChild(document.createElement('a'));
+			linkEl.className = 'sc-file-path';
+			linkEl.textContent = filePath;
+			linkEl.href = '#';
+			linkEl.title = `Open ${filePath}`;
+			linkEl.onclick = (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				const editorService = this._instantiationService.invokeFunction(a => a.get(IEditorService));
+				editorService.openEditor({ resource: URI.file(filePath) });
+			};
+		}
+
 		this._statusEl = this._headerEl.appendChild(document.createElement('span'));
 		this._statusEl.className = 'sc-tool-call-status';
 		this._updateStatusElement(tc.status);
@@ -78,12 +96,28 @@ export class ToolCallItem extends Component {
 			return `$ ${title}`;
 		}
 
+		// For file tools, strip the path from the title since we show it as a link
+		const titleLower = title.toLowerCase();
+		if (titleLower.startsWith('read:') || titleLower.startsWith('write:') || titleLower.startsWith('edit:')) {
+			return title.split(':')[0];
+		}
+
 		return title;
 	}
 
 	private _isTerminal(): boolean {
 		const content = this._tool.content || [];
 		return content.some((c: Record<string, unknown>) => c.type === 'terminal');
+	}
+
+	private _isReadTool(): boolean {
+		const kind = this._tool.kind || '';
+		const titleLower = (this._tool.name || '').toLowerCase();
+		return kind === 'read' ||
+			titleLower === 'read' ||
+			titleLower.startsWith('read:') ||
+			titleLower.startsWith('read ') ||
+			titleLower.startsWith('read/');
 	}
 
 	private _getStatusIcon(status: string): string {
@@ -135,9 +169,23 @@ export class ToolCallItem extends Component {
 		if (blockType === 'text' && !this._inlineTerminal) {
 			const text = block.text as string || block.content as string || '';
 			if (text) {
-				const pre = this._contentEl.appendChild(document.createElement('pre'));
-				pre.className = 'sc-tool-raw';
-				pre.textContent = text;
+				// For read tools, render a proper FileReadView with clickable header
+				if (this._isReadTool() && !this._contentEl.querySelector('.sc-file-read-view')) {
+					const rawInput = (this._tool.rawInput as Record<string, unknown>) || {};
+					const filePath = this._getFilePath(rawInput);
+
+					// Clear any raw pre that might have been added
+					this._contentEl.querySelectorAll('.sc-tool-raw').forEach(el => el.remove());
+
+					this._contentEl.appendChild(this._createFileHeader('📄', filePath));
+					const view = new FileReadView({ content: text, path: filePath, instantiationService: this._instantiationService });
+					view.appendTo(this._contentEl);
+					this._register(view);
+				} else {
+					const pre = this._contentEl.appendChild(document.createElement('pre'));
+					pre.className = 'sc-tool-raw';
+					pre.textContent = text;
+				}
 			}
 		}
 
@@ -150,16 +198,14 @@ export class ToolCallItem extends Component {
 				const path = block.path as string || '';
 				const newText = (block.newText ?? block.new_text) as string || '';
 				const oldText = (block.oldText ?? block.old_text) as string | undefined;
-				const filePath = path || (this._tool.rawInput as Record<string, unknown>)?.path as string || this._tool.name;
+				const filePath = this._getFilePath((this._tool.rawInput as Record<string, unknown>) || {}, path);
 
 				// Clear any fallback raw JSON
 				this._contentEl.querySelectorAll('.sc-tool-raw').forEach(el => el.remove());
 
 			if (oldText) {
 				// Edit tool: show Monaco diff
-				const header = this._contentEl.appendChild(document.createElement('div'));
-				header.className = 'sc-file-label';
-				header.innerHTML = `<span class="sc-file-icon">🔄</span> <code>${filePath}</code>`;
+				this._contentEl.appendChild(this._createFileHeader('🔄', filePath));
 
 				const view = new FileEditView({
 						beforeContent: oldText,
@@ -171,9 +217,7 @@ export class ToolCallItem extends Component {
 					this._register(view);
 			} else {
 				// Write tool: show green new-file view
-				const header = this._contentEl.appendChild(document.createElement('div'));
-				header.className = 'sc-file-label';
-				header.innerHTML = `<span class="sc-file-icon">✏️</span> <code>${filePath}</code>`;
+				this._contentEl.appendChild(this._createFileHeader('✏️', filePath));
 
 				const view = new FileWriteView({ content: newText, path: filePath, instantiationService: this._instantiationService });
 					view.appendTo(this._contentEl);
@@ -185,6 +229,57 @@ export class ToolCallItem extends Component {
 		// Track the block
 		if (!this._tool.content) this._tool.content = [];
 		this._tool.content.push(block);
+	}
+
+	private _getFilePath(rawInput: Record<string, unknown>, diffPath?: string): string {
+		return (diffPath ||
+			rawInput.path as string ||
+			rawInput.file_path as string ||
+			rawInput.filePath as string ||
+			rawInput.file as string ||
+			this._tool.name) as string;
+	}
+
+	private _getHeaderFilePath(): string | null {
+		const kind = this._tool.kind || '';
+		const titleLower = (this._tool.name || '').toLowerCase();
+
+		// Only show file path in header for file operations
+		const isFileTool = kind === 'read' || kind === 'write' || kind === 'edit' ||
+			titleLower === 'read' || titleLower.startsWith('read:') || titleLower.startsWith('read ') ||
+			titleLower === 'write' || titleLower.startsWith('write:') ||
+			titleLower === 'edit' || titleLower.startsWith('edit:');
+
+		if (!isFileTool) return null;
+
+		const rawInput = (this._tool.rawInput as Record<string, unknown>) || {};
+		return (rawInput.path as string ||
+			rawInput.file_path as string ||
+			rawInput.filePath as string ||
+			rawInput.file as string) || null;
+	}
+
+	private _createFileHeader(icon: string, filePath: string): HTMLElement {
+		const header = document.createElement('div');
+		header.className = 'sc-file-label';
+
+		const iconEl = header.appendChild(document.createElement('span'));
+		iconEl.className = 'sc-file-icon';
+		iconEl.textContent = icon;
+
+		const linkEl = header.appendChild(document.createElement('a'));
+		linkEl.className = 'sc-file-path';
+		linkEl.textContent = filePath;
+		linkEl.href = '#';
+		linkEl.title = `Open ${filePath}`;
+		linkEl.onclick = (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			const editorService = this._instantiationService.invokeFunction(a => a.get(IEditorService));
+			editorService.openEditor({ resource: URI.file(filePath) });
+		};
+
+		return header;
 	}
 
 	private _updateStatusElement(status: string): void {
@@ -221,9 +316,9 @@ export class ToolCallItem extends Component {
 		// Determine the effective kind from title patterns
 		const titleLower = (this._tool.name || '').toLowerCase();
 		const inferredKind = kind ||
-			(titleLower.startsWith('read:') ? 'read' :
-			(titleLower.startsWith('write:') || titleLower.startsWith('create:') ? 'write' :
-			(titleLower.startsWith('edit:') ? 'edit' :
+			(titleLower === 'read' || titleLower.startsWith('read:') || titleLower.startsWith('read ') ? 'read' :
+			(titleLower === 'write' || titleLower === 'create' || titleLower.startsWith('write:') || titleLower.startsWith('create:') ? 'write' :
+			(titleLower === 'edit' || titleLower.startsWith('edit:') || titleLower.startsWith('edit ') ? 'edit' :
 			(titleLower.startsWith('run:') || titleLower.startsWith('exec:') ||
 			 titleLower.startsWith('terminal:') || titleLower.startsWith('command:') ? 'execute' : ''))));
 
@@ -242,7 +337,7 @@ export class ToolCallItem extends Component {
 		// Read tool
 		if (inferredKind === 'read') {
 			let fileContent: string | undefined;
-			const filePath = diffPath || rawInput.path as string || this._tool.name;
+			const filePath = this._getFilePath(rawInput, diffPath);
 
 			const textBlock = content.find((c: Record<string, unknown>) => c.type === 'text');
 			if (textBlock) {
@@ -250,9 +345,7 @@ export class ToolCallItem extends Component {
 			}
 
 			if (fileContent) {
-				const header = this._contentEl.appendChild(document.createElement('div'));
-				header.className = 'sc-file-label';
-				header.innerHTML = `<span class="sc-file-icon">📄</span> <code>${filePath}</code>`;
+				this._contentEl.appendChild(this._createFileHeader('📄', filePath));
 
 				const view = new FileReadView({ content: fileContent, path: filePath, instantiationService: this._instantiationService });
 				view.appendTo(this._contentEl);
@@ -263,13 +356,11 @@ export class ToolCallItem extends Component {
 
 		// Write tool (new file)
 		if (inferredKind === 'write' || inferredKind === 'create') {
-			const filePath = diffPath || rawInput.path as string || this._tool.name;
+			const filePath = this._getFilePath(rawInput, diffPath);
 			const fileContent = newText || rawInput.content as string || '';
 
 			if (fileContent) {
-				const header = this._contentEl.appendChild(document.createElement('div'));
-				header.className = 'sc-file-label';
-				header.innerHTML = `<span class="sc-file-icon">✏️</span> <code>${filePath}</code>`;
+				this._contentEl.appendChild(this._createFileHeader('✏️', filePath));
 
 				if (oldText && oldText !== fileContent) {
 					const view = new FileEditView({
@@ -291,12 +382,10 @@ export class ToolCallItem extends Component {
 
 		// Edit tool (diff)
 		if (inferredKind === 'edit') {
-			const filePath = diffPath || rawInput.path as string || this._tool.name;
+			const filePath = this._getFilePath(rawInput, diffPath);
 
 			if (newText && oldText) {
-				const header = this._contentEl.appendChild(document.createElement('div'));
-				header.className = 'sc-file-label';
-				header.innerHTML = `<span class="sc-file-icon">🔄</span> <code>${filePath}</code>`;
+				this._contentEl.appendChild(this._createFileHeader('🔄', filePath));
 
 				const view = new FileEditView({
 					beforeContent: oldText,

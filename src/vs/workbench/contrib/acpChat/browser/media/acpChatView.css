@@ -607,7 +607,7 @@
 /* ===== Tool Calls ===== */
 .sc-tool-call {
 	background: var(--vscode-editor-background);
-	border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+	border: 1px solid var(--vscode-editorWidget-border);
 	border-radius: 6px;
 	margin: 4px 0;
 	overflow: hidden;
@@ -622,7 +622,7 @@
 	cursor: pointer;
 	user-select: none;
 	background: var(--vscode-sideBar-background);
-	border-bottom: 1px solid var(--vscode-widget-border, transparent);
+	border-bottom: 1px solid var(--vscode-editorWidget-border);
 }
 
 .sc-tool-call-header:hover {
@@ -635,13 +635,28 @@
 }
 
 .sc-tool-call-name {
-	flex: 1;
 	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
 	font-size: 11px;
 	color: var(--vscode-foreground);
+	margin-right: 8px;
+}
+
+.sc-tool-call-header .sc-file-path {
+	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
+	font-size: 11px;
+	color: var(--vscode-textLink-foreground);
+	text-decoration: none;
+	cursor: pointer;
+	flex: 1;
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.sc-tool-call-header .sc-file-path:hover {
+	color: var(--vscode-textLink-activeForeground);
+	text-decoration: underline;
 }
 
 .sc-tool-call-status {
@@ -700,6 +715,19 @@
 	color: var(--vscode-foreground);
 }
 
+.sc-file-path {
+	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
+	font-size: 11px;
+	color: var(--vscode-textLink-foreground);
+	text-decoration: none;
+	cursor: pointer;
+}
+
+.sc-file-path:hover {
+	color: var(--vscode-textLink-activeForeground);
+	text-decoration: underline;
+}
+
 .sc-file-icon {
 	font-size: 12px;
 }
@@ -707,7 +735,7 @@
 /* ===== Inline Terminal ===== */
 .sc-inline-terminal {
 	background: var(--vscode-terminal-background, var(--vscode-editor-background));
-	border: 1px solid var(--vscode-terminal-border, var(--vscode-widget-border));
+	border: 1px solid var(--vscode-editorWidget-border);
 	border-radius: 6px;
 	overflow: hidden;
 }
@@ -718,7 +746,7 @@
 	gap: 8px;
 	padding: 4px 10px;
 	background: var(--vscode-terminal-background, var(--vscode-sideBar-background));
-	border-bottom: 1px solid var(--vscode-terminal-border, var(--vscode-widget-border));
+	border-bottom: 1px solid var(--vscode-editorWidget-border);
 	font-size: 11px;
 }
 
@@ -765,7 +793,7 @@
 .sc-file-read-view,
 .sc-file-write-view,
 .sc-file-edit-view {
-	border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+	border: 1px solid var(--vscode-editorWidget-border);
 	border-radius: 4px;
 	overflow: hidden;
 	margin: 4px 0;
@@ -782,7 +810,7 @@
 	justify-content: space-between;
 	padding: 4px 10px;
 	background: var(--vscode-sideBar-background);
-	border-bottom: 1px solid var(--vscode-widget-border, transparent);
+	border-bottom: 1px solid var(--vscode-editorWidget-border);
 	font-size: 11px;
 }
 
