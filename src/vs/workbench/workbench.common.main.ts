@@ -217,6 +217,9 @@ import './contrib/searchEditor/browser/searchEditor.contribution.js';
 // Sidex Chat
 import './contrib/acpChat/browser/acpChat.contribution.js';
 
+// Sidex Markdown Preview
+import './contrib/markdownPreview/browser/markdownPreview.contribution.js';
+
 // Sash
 import './contrib/sash/browser/sash.contribution.js';
 

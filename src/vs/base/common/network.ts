@@ -95,6 +95,9 @@ export namespace Schemas {
 	/** Scheme used for ACP Chat editor tabs (multi-session). */
 	export const acpChat = 'acp-chat';
 
+	/** Scheme used for Sidex markdown preview editor tabs. */
+	export const markdownPreview = 'sidex-markdown-preview';
+
 	/**
 	 * Scheme used internally for webviews that aren't linked to a resource (i.e. not custom editors)
 	 */

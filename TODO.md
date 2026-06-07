@@ -30,6 +30,14 @@
 - I want to be able to save what I was typing in so drafts folder for session/prompt essentially
 - Autocomplete with something like zed uses for local model autocomplete
 
+$$ \nabla $$
+
+
+```mermaid
+graph TD
+    A --> B
+    B --> C
+```
 ### Tools
 
 - Add diff fixtures for edit and write
@@ -64,3 +72,5 @@
 ## CROW-CLI SPECIFIC CHANGES
 
 - Do we want to make modifying crow-cli and crow-mcp like the core use case of this bad-boy?
+
+

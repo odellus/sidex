@@ -39,7 +39,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "rpm", "appimage"],
+    "targets": ["deb"],
     "category": "DeveloperTool",
     "shortDescription": "A fast, open-source code editor.",
     "longDescription": "Crow is a fast, lightweight, open-source code editor built for developers.",
