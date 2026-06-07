@@ -1,13 +1,14 @@
 import { Component, DOM, $ } from '../base.js';
 import { Codicon } from '../../../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../../../base/common/themables.js';
-import { renderMarkdown } from '../markdownRenderer.js';
+import { renderMarkdown, renderMermaidDiagrams } from '../markdownRenderer.js';
 import type { AcpNotification } from '../../acp-utils.js';
 
 export class AgentMessageGroup extends Component {
 	private _text = '';
 	private _bodyEl: HTMLElement;
 	private _streaming = false;
+	private _mermaidTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor() {
 		super('div', 'sc-agent-msg');
@@ -40,6 +41,9 @@ export class AgentMessageGroup extends Component {
 		this._text += text;
 		this._bodyEl.innerHTML = renderMarkdown(this._text);
 		this._streaming = true;
+		// Defer mermaid rendering until DOM is ready
+		if (this._mermaidTimer) { clearTimeout(this._mermaidTimer); }
+		this._mermaidTimer = setTimeout(() => renderMermaidDiagrams(this._bodyEl), 200);
 	}
 
 	stopStreaming(): void {
