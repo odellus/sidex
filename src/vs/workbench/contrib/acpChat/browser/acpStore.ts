@@ -81,6 +81,7 @@ export class AcpStore {
 	private _cwd: string = '';
 
 	private _connectionStatus: ConnectionStatus = 'disconnected';
+	private _connectingSafetyTimer: ReturnType<typeof setTimeout> | null = null;
 	private _promptTurnState: PromptTurnState = { status: 'idle' };
 	private _notifications: AcpNotification[] = [];
 	private _isStreaming: boolean = false;
@@ -141,6 +142,25 @@ export class AcpStore {
 	dispose(): void {
 		for (const u of this._unlisteners) { u(); }
 		this._unlisteners = [];
+		this._clearConnectingSafetyTimer();
+	}
+
+	private _clearConnectingSafetyTimer(): void {
+		if (this._connectingSafetyTimer) {
+			clearTimeout(this._connectingSafetyTimer);
+			this._connectingSafetyTimer = null;
+		}
+	}
+
+	private _startConnectingSafetyTimer(): void {
+		this._clearConnectingSafetyTimer();
+		this._connectingSafetyTimer = setTimeout(() => {
+			if (this._connectionStatus === 'connecting') {
+				console.warn('[AcpStore] Connecting safety timer fired — forcing status back to ready');
+				this._connectionStatus = 'ready';
+				this._onDidChangeConnectionState.fire();
+			}
+		}, 10000);
 	}
 
 	// ─── Agent lifecycle ───────────────────────────────────────────────────
@@ -162,6 +182,7 @@ export class AcpStore {
 		}
 
 		this._connectionStatus = 'connecting';
+		this._startConnectingSafetyTimer();
 		this._cwd = config.cwd;
 		this._onDidChangeConnectionState.fire();
 
@@ -196,6 +217,7 @@ export class AcpStore {
 					this._configOptions = loadResp.config_options || [];
 					this._onDidChangeConfigOptions.fire(this._configOptions);
 					this._connectionStatus = 'ready';
+					this._clearConnectingSafetyTimer();
 					this._onDidChangeConnectionState.fire();
 					return;
 				} catch (e) {
@@ -213,11 +235,13 @@ export class AcpStore {
 			});
 			this._sessionId = sessionResp.session_id;
 			this._configOptions = sessionResp.config_options || [];
-			this._onDidChangeConfigOptions.fire(this._configOptions);
 			this._connectionStatus = 'ready';
+			this._clearConnectingSafetyTimer();
+			this._onDidChangeConfigOptions.fire(this._configOptions);
 			this._onDidChangeConnectionState.fire();
 		} catch (e) {
 			this._connectionStatus = 'disconnected';
+			this._clearConnectingSafetyTimer();
 			this._onDidChangeConnectionState.fire();
 			throw e;
 		}
@@ -231,6 +255,7 @@ export class AcpStore {
 		this._sessionId = '';
 		this._connectionId = '';
 		this._connectionStatus = 'disconnected';
+		this._clearConnectingSafetyTimer();
 		this._notifications = [];
 		this._onDidChangeConnectionState.fire();
 		this._onDidChangeNotifications.fire();
@@ -329,6 +354,7 @@ export class AcpStore {
 
 		// Show loading state
 		this._connectionStatus = 'connecting';
+		this._startConnectingSafetyTimer();
 		this._onDidChangeConnectionState.fire();
 
 		try {
@@ -347,12 +373,14 @@ export class AcpStore {
 			this._sessionId = resp.session_id;
 			this._configOptions = resp.config_options || [];
 			this._connectionStatus = 'ready';
+			this._clearConnectingSafetyTimer();
 			this._onDidChangeConfigOptions.fire(this._configOptions);
 			this._onDidChangeNotifications.fire();
 			this._onDidChangeConnectionState.fire();
 		} catch (e) {
-			console.error('[acpStore] loadSession failed:', e);
+			console.error('[AcpStore] loadSession failed:', e);
 			this._connectionStatus = 'ready';
+			this._clearConnectingSafetyTimer();
 			this._onDidChangeConnectionState.fire();
 			throw e;
 		}

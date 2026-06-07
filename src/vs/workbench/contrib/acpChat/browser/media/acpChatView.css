@@ -1786,6 +1786,29 @@
 	tab-size: 4;
 }
 
+/* Monaco editor decoration styles for FileEditView unified diff */
+.sc-diff-line-added {
+	background: var(--vscode-diffEditor-insertedTextBackground, rgba(155, 185, 85, 0.2)) !important;
+}
+
+.sc-diff-line-removed {
+	background: var(--vscode-diffEditor-removedTextBackground, rgba(255, 0, 0, 0.2)) !important;
+}
+
+.sc-diff-glyph-added::before {
+	content: '+';
+	color: var(--vscode-gitDecoration-addedResourceForeground, #73c991);
+	font-weight: bold;
+	margin-left: 4px;
+}
+
+.sc-diff-glyph-removed::before {
+	content: '-';
+	color: var(--vscode-gitDecoration-deletedResourceForeground, #f14c4c);
+	font-weight: bold;
+	margin-left: 4px;
+}
+
 /* ===== Permission Dialog ===== */
 .sc-permission-dialog {
 	border: 1px solid var(--vscode-editorWarning-foreground, #cca700);

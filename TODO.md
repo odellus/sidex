@@ -69,9 +69,9 @@ graph TD
 - ATProto PDS based auth
 - ~~Add `` ` `` character to the list of characters that typst LSP uses for autoclose and autosurround behavior in editor~~
 - Make the preview robust to changes in editor size via css or something. Violates constraints that are assumed of vscode/sidex editor components and leads to errors if it does not properly resize and play nice with the IDE.
+- Keep editors in sync with backend when changes are made by agent or another editor. anything. keep them in sync. add dirty indicator when there's a difference. use the dirty state in read_file tool because that's the whole point. 
+
+
 ## CROW-CLI SPECIFIC CHANGES
 
 - Do we want to make modifying crow-cli and crow-mcp like the core use case of this bad-boy?
-
-
-

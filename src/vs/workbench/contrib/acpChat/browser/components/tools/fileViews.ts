@@ -10,7 +10,6 @@
 
 import { Component } from '../base.js';
 import { CodeEditorWidget } from '../../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
-import { DiffEditorWidget } from '../../../../../../editor/browser/widget/diffEditor/diffEditorWidget.js';
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { IModelService } from '../../../../../../editor/common/services/model.js';
 import { ILanguageService } from '../../../../../../editor/common/languages/language.js';
@@ -182,7 +181,58 @@ export class FileWriteView extends Component {
 	}
 }
 
-// ─── FileEditView (inline diff: before vs after) ─────────────────────────────
+// ─── Simple line diff ────────────────────────────────────────────────────────
+
+interface DiffLine { type: 'context' | 'removed' | 'added'; line: string; }
+
+/** Simple line-level diff for small files. Produces unified-diff-style output. */
+function simpleLineDiff(oldText: string, newText: string): DiffLine[] {
+	const oldLines = oldText.split('\n');
+	const newLines = newText.split('\n');
+	const result: DiffLine[] = [];
+	let oldIdx = 0, newIdx = 0;
+
+	while (oldIdx < oldLines.length || newIdx < newLines.length) {
+		if (oldIdx >= oldLines.length) {
+			result.push({ type: 'added', line: newLines[newIdx++] });
+		} else if (newIdx >= newLines.length) {
+			result.push({ type: 'removed', line: oldLines[oldIdx++] });
+		} else if (oldLines[oldIdx] === newLines[newIdx]) {
+			result.push({ type: 'context', line: oldLines[oldIdx] });
+			oldIdx++; newIdx++;
+		} else {
+			// Mismatch: peek ahead to decide if lines were inserted or deleted
+			const oldLine = oldLines[oldIdx];
+			const newLine = newLines[newIdx];
+			let foundInNew = -1;
+			for (let i = newIdx + 1; i < Math.min(newIdx + 6, newLines.length); i++) {
+				if (newLines[i] === oldLine) { foundInNew = i; break; }
+			}
+			let foundInOld = -1;
+			for (let i = oldIdx + 1; i < Math.min(oldIdx + 6, oldLines.length); i++) {
+				if (oldLines[i] === newLine) { foundInOld = i; break; }
+			}
+
+			if (foundInNew !== -1 && (foundInOld === -1 || foundInNew - newIdx <= foundInOld - oldIdx)) {
+				for (let i = newIdx; i < foundInNew; i++) {
+					result.push({ type: 'added', line: newLines[i] });
+				}
+				newIdx = foundInNew;
+			} else if (foundInOld !== -1) {
+				for (let i = oldIdx; i < foundInOld; i++) {
+					result.push({ type: 'removed', line: oldLines[i] });
+				}
+				oldIdx = foundInOld;
+			} else {
+				result.push({ type: 'removed', line: oldLines[oldIdx++] });
+				result.push({ type: 'added', line: newLines[newIdx++] });
+			}
+		}
+	}
+	return result;
+}
+
+// ─── FileEditView (single-view unified diff using CodeEditorWidget) ──────────
 
 interface FileEditViewOptions {
 	beforeContent: string;
@@ -193,128 +243,82 @@ interface FileEditViewOptions {
 }
 
 export class FileEditView extends Component {
-	private _diffEditor: DiffEditorWidget | null = null;
-	private _showFullDiff = false;
-	private _heightTimer: ReturnType<typeof setTimeout> | null = null;
+	private _editor: CodeEditorWidget | null = null;
 
 	constructor(options: FileEditViewOptions) {
 		super('div', 'sc-file-edit-view');
-
-		// Header with path and expand/collapse button
-		const header = this.append('div', 'sc-file-edit-header');
-		const pathEl = header.appendChild(document.createElement('span'));
-		pathEl.className = 'sc-file-edit-path';
-		pathEl.textContent = options.path;
-
-		const toggleBtn = header.appendChild(document.createElement('button'));
-		toggleBtn.className = 'sc-file-edit-toggle';
-		toggleBtn.textContent = 'Expand';
-		toggleBtn.onclick = () => {
-			this._showFullDiff = !this._showFullDiff;
-			toggleBtn.textContent = this._showFullDiff ? 'Collapse' : 'Expand';
-			this._rebuildDiffEditor(container, options, maxHeight);
-		};
-
 		const container = this.append('div', 'sc-file-view-container');
 		const maxHeight = options.maxHeight ?? 400;
 
-		this._rebuildDiffEditor(container, options, maxHeight);
+		// Compute unified diff
+		const diffLines = simpleLineDiff(options.beforeContent, options.afterContent);
+		const diffText = diffLines.map(dl => {
+			if (dl.type === 'removed') return '-' + dl.line;
+			if (dl.type === 'added') return '+' + dl.line;
+			return ' ' + dl.line;
+		}).join('\n');
 
-		// Single dispose callback — handles whatever editor is current
+		const model = createModel(diffText, options.path + '-diff', options.instantiationService);
+
+		const editor = options.instantiationService.createInstance(CodeEditorWidget, container, {
+			...commonEditorOptions,
+			folding: false,
+		}, {
+			isSimpleWidget: true
+		});
+		editor.setModel(model);
+		editor.layout();
+
+		this._editor = editor;
+
+		// Apply decorations: green for added, red for removed
+		const decorations = diffLines.map((dl, idx) => {
+			const lineNumber = idx + 1;
+			if (dl.type === 'added') {
+				return {
+					range: new Range(lineNumber, 1, lineNumber, model.getLineMaxColumn(lineNumber)),
+					options: {
+						description: 'diff-added',
+						isWholeLine: true,
+						className: 'sc-diff-line-added',
+						linesDecorationsClassName: 'sc-diff-glyph-added',
+					}
+				};
+			}
+			if (dl.type === 'removed') {
+				return {
+					range: new Range(lineNumber, 1, lineNumber, model.getLineMaxColumn(lineNumber)),
+					options: {
+						description: 'diff-removed',
+						isWholeLine: true,
+						className: 'sc-diff-line-removed',
+						linesDecorationsClassName: 'sc-diff-glyph-removed',
+					}
+				};
+			}
+			return null;
+		}).filter((d): d is NonNullable<typeof d> => d !== null);
+
+		editor.deltaDecorations([], decorations);
+
+		// Set height
+		const lineCount = diffLines.length;
+		const estimatedHeight = Math.min(lineCount * 18 + 16, maxHeight);
+		container.style.height = `${Math.max(estimatedHeight, 60)}px`;
+
+		const measureTimer = setTimeout(() => {
+			const contentHeight = editor.getContentHeight();
+			const measured = Math.min(contentHeight + 16, maxHeight);
+			container.style.height = `${Math.max(measured, 60)}px`;
+			editor.layout();
+		}, 50);
+
 		this._register({
 			dispose: () => {
-				if (this._heightTimer) {
-					clearTimeout(this._heightTimer);
-					this._heightTimer = null;
-				}
-				if (this._diffEditor) {
-					const model = this._diffEditor.getModel();
-					if (model) {
-						model.original?.dispose();
-						model.modified?.dispose();
-					}
-					this._diffEditor.dispose();
-					this._diffEditor = null;
-				}
+				clearTimeout(measureTimer);
+				editor.dispose();
+				model.dispose();
 			}
 		});
-	}
-
-	private _rebuildDiffEditor(
-		container: HTMLElement,
-		options: FileEditViewOptions,
-		maxHeight: number
-	): void {
-		// Dispose old editor and models explicitly
-		if (this._diffEditor) {
-			const model = this._diffEditor.getModel();
-			if (model) {
-				model.original?.dispose();
-				model.modified?.dispose();
-			}
-			this._diffEditor.dispose();
-			this._diffEditor = null;
-		}
-		if (this._heightTimer) {
-			clearTimeout(this._heightTimer);
-			this._heightTimer = null;
-		}
-		container.innerHTML = '';
-
-		const originalModel = createModel(options.beforeContent, options.path + '-orig', options.instantiationService);
-		const modifiedModel = createModel(options.afterContent, options.path + '-mod', options.instantiationService);
-
-		const diffEditor = options.instantiationService.createInstance(DiffEditorWidget, container, {
-			originalEditable: false,
-			readOnly: true,
-			minimap: { enabled: false },
-			scrollBeyondLastLine: false,
-			scrollbar: { vertical: 'auto', horizontal: 'auto' },
-			lineNumbers: 'on',
-			folding: true,
-			wordWrap: 'on',
-			automaticLayout: true,
-			fontSize: 12,
-			fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-			padding: { top: 4, bottom: 4 },
-			contextmenu: false,
-			renderSideBySide: true,
-			useInlineViewWhenSpaceIsLimited: false,
-			renderOverviewRuler: false,
-			diffAlgorithm: 'legacy',
-			hideUnchangedRegions: {
-				enabled: !this._showFullDiff,
-				contextLineCount: 3,
-				minimumLineCount: 5,
-				revealLineCount: 5,
-			},
-		}, {});
-
-		diffEditor.setModel({
-			original: originalModel,
-			modified: modifiedModel,
-		});
-		diffEditor.layout();
-
-		this._diffEditor = diffEditor;
-
-		// Initial height estimate
-		const lineCount = Math.max(
-			options.beforeContent.split('\n').length,
-			options.afterContent.split('\n').length
-		);
-		const estimatedHeight = Math.min(lineCount * 18 + 16, maxHeight);
-		container.style.height = `${Math.max(estimatedHeight, 80)}px`;
-
-		// Measure actual rendered height after layout
-		this._heightTimer = setTimeout(() => {
-			const contentHeight = Math.max(
-				diffEditor.getOriginalEditor().getContentHeight(),
-				diffEditor.getModifiedEditor().getContentHeight()
-			);
-			const measured = Math.min(contentHeight + 16, maxHeight);
-			container.style.height = `${Math.max(measured, 80)}px`;
-			diffEditor.layout();
-		}, 50);
 	}
 }
