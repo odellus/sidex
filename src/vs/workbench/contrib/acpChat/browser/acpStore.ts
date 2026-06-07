@@ -324,7 +324,7 @@ export class AcpStore {
 
 	// ─── Session history ───────────────────────────────────────────────────
 
-	async listSessions(cwd: string): Promise<{ id: string; displayId: string; date: number }[]> {
+	async listSessions(cwd: string): Promise<{ id: string; displayId: string; title?: string; date: number }[]> {
 		if (!this._sessionId) { return []; }
 		try {
 			const result = await invoke<{ sessions?: { sessionId: string; title?: string; updatedAt?: string }[] }>('acp_chat_list_sessions', {
@@ -340,6 +340,7 @@ export class AcpStore {
 				return {
 					id: s.sessionId,
 					displayId: `${s.sessionId}-${count}`,
+					title: s.title,
 					date: s.updatedAt ? new Date(s.updatedAt).getTime() : Date.now(),
 				};
 			});

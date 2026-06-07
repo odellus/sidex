@@ -54,7 +54,7 @@ export interface IAcpChatService {
 	setSelectedModel(modelId: string): void;
 	setConfigOption(configId: string, value: string): Promise<void>;
 	respondToPermission(toolCallId: string, approved: boolean): void;
-	getSavedSessions(): Promise<Array<{ id: string; displayId: string; date: number }>>;
+	getSavedSessions(): Promise<Array<{ id: string; displayId: string; title?: string; date: number }>>;
 }
 
 // ─── Implementation ────────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ class AcpChatServiceImpl implements IAcpChatService {
 		// For now, auto-approve is done on the backend
 	}
 
-	async getSavedSessions(): Promise<Array<{ id: string; displayId: string; date: number }>> {
+	async getSavedSessions(): Promise<Array<{ id: string; displayId: string; title?: string; date: number }>> {
 		const workspace = this._workspaceContext.getWorkspace();
 		const cwd = workspace.folders[0]?.uri?.fsPath || '/home';
 		return this._store.listSessions(cwd);

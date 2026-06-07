@@ -222,7 +222,7 @@
 	position: absolute;
 	top: 100%;
 	right: 0;
-	width: 300px;
+	width: 400px;
 	max-height: 400px;
 	background: var(--vscode-menu-background, var(--vscode-dropdown-background));
 	border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
@@ -259,13 +259,61 @@
 
 .sc-history-item {
 	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 8px 10px;
-	border-radius: 4px;
+	flex-direction: column;
+	gap: 4px;
+	padding: 10px 12px;
 	cursor: pointer;
+	transition: background-color 0.15s ease;
+}
+
+.sc-history-item:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+.sc-history-alt {
+	background-color: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.sc-history-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	width: 100%;
+}
+
+.sc-history-title {
+	font-family: var(--vscode-editor-font-family);
 	font-size: 12px;
-	transition: background 0.1s ease;
+	color: var(--vscode-foreground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	flex: 1;
+	min-width: 0;
+}
+
+.sc-history-date {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	margin-left: 12px;
+	flex-shrink: 0;
+}
+
+.sc-history-subtitle {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	padding-left: 16px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sc-history-empty {
+	padding: 20px;
+	text-align: center;
+	color: var(--vscode-descriptionForeground);
+	font-style: italic;
 }
 
 .sc-history-item:hover {
@@ -279,13 +327,8 @@
 	white-space: nowrap;
 	flex: 1;
 	min-width: 0;
-}
-
-.sc-history-date {
-	color: var(--vscode-descriptionForeground);
-	font-size: 10px;
-	flex-shrink: 0;
-	margin-left: 8px;
+	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
+	font-size: 11px;
 }
 
 .sc-history-empty {

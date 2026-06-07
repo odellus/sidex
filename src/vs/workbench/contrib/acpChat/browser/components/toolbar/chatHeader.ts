@@ -12,6 +12,7 @@ function icon(codicon: ThemeIcon): HTMLSpanElement {
 export interface ISessionItem {
 	id: string;
 	displayId: string;
+	title?: string;
 	updated_at?: string;
 }
 
@@ -174,16 +175,26 @@ export class ChatHeader extends Component {
 			empty.textContent = 'No past chats';
 			return;
 		}
-		for (const s of sessions) {
+		for (let i = 0; i < sessions.length; i++) {
+			const s = sessions[i];
 			const row = DOM.append(this._historyList, $('div.sc-history-item'));
+			if (i % 2 === 1) { row.classList.add('sc-history-alt'); }
 			row.dataset.id = s.id;
-			row.dataset.title = (s.displayId || '').toLowerCase();
-			const titleEl = DOM.append(row, $('span.sc-history-title'));
+			
+			const headerEl = DOM.append(row, $('div.sc-history-header'));
+			const titleEl = DOM.append(headerEl, $('span.sc-history-title'));
 			titleEl.textContent = s.displayId;
+			
 			if (s.updated_at) {
-				const dateEl = DOM.append(row, $('span.sc-history-date'));
+				const dateEl = DOM.append(headerEl, $('span.sc-history-date'));
 				dateEl.textContent = new Date(s.updated_at).toLocaleDateString();
 			}
+			
+			if (s.title && s.title !== 'Untitled Chat') {
+				const subtitleEl = DOM.append(row, $('div.sc-history-subtitle'));
+				subtitleEl.textContent = s.title;
+			}
+			
 			this.on(row, 'click', () => {
 				this._historyPanel.classList.remove('visible');
 				this._onSelectSession.fire(s.id);

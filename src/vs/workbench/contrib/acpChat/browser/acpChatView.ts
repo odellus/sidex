@@ -303,6 +303,7 @@ export class AcpChatViewPane extends ViewPane {
 			this._header.setSessions(sessions.map(s => ({
 				id: s.id,
 				displayId: s.displayId,
+				title: s.title,
 				updated_at: new Date(s.date).toISOString(),
 			})));
 		} catch (e) {
