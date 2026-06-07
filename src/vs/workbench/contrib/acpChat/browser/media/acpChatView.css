@@ -606,19 +606,220 @@
 
 /* ===== Tool Calls ===== */
 .sc-tool-call {
-	padding: 4px 12px;
+	background: var(--vscode-editor-background);
+	border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+	border-radius: 6px;
+	margin: 4px 0;
+	overflow: hidden;
 	font-size: 12px;
+}
+
+.sc-tool-call-header {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	cursor: pointer;
+	user-select: none;
+	background: var(--vscode-sideBar-background);
+	border-bottom: 1px solid var(--vscode-widget-border, transparent);
+}
+
+.sc-tool-call-header:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.sc-tool-call-icon {
+	font-size: 11px;
+	flex-shrink: 0;
+}
+
+.sc-tool-call-name {
+	flex: 1;
+	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
+	font-size: 11px;
+	color: var(--vscode-foreground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sc-tool-call-status {
+	font-size: 10px;
+	flex-shrink: 0;
+}
+
+.sc-tool-call-status.running {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.sc-tool-call-status.done {
+	color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen));
+}
+
+.sc-tool-call-status.error {
+	color: var(--vscode-errorForeground);
+}
+
+.sc-tool-call-chevron {
+	font-size: 10px;
+	color: var(--vscode-foreground);
+	opacity: 0.5;
+	flex-shrink: 0;
+}
+
+.sc-tool-call-content {
+	padding: 8px 10px;
+}
+
+.sc-tool-raw {
+	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
+	font-size: 11px;
+	background: var(--vscode-textCodeBlock-background);
+	padding: 8px;
+	border-radius: 4px;
+	overflow-x: auto;
+	margin: 4px 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+/* ===== File Labels ===== */
+.sc-file-label {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	margin-bottom: 6px;
 	display: flex;
 	align-items: center;
 	gap: 6px;
 }
 
-.sc-tool-name {
+.sc-file-label code {
 	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
 	font-size: 11px;
-	color: var(--vscode-textLink-foreground);
+	color: var(--vscode-foreground);
 }
 
+.sc-file-icon {
+	font-size: 12px;
+}
+
+/* ===== Inline Terminal ===== */
+.sc-inline-terminal {
+	background: var(--vscode-terminal-background, var(--vscode-editor-background));
+	border: 1px solid var(--vscode-terminal-border, var(--vscode-widget-border));
+	border-radius: 6px;
+	overflow: hidden;
+}
+
+.sc-inline-terminal-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 10px;
+	background: var(--vscode-terminal-background, var(--vscode-sideBar-background));
+	border-bottom: 1px solid var(--vscode-terminal-border, var(--vscode-widget-border));
+	font-size: 11px;
+}
+
+.sc-inline-terminal-title {
+	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
+	color: var(--vscode-terminal-foreground);
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sc-inline-terminal-cwd {
+	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
+	color: var(--vscode-descriptionForeground);
+	font-size: 10px;
+	opacity: 0.7;
+}
+
+.sc-inline-terminal-status {
+	font-size: 10px;
+	flex-shrink: 0;
+}
+
+.sc-inline-terminal-status.running {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.sc-inline-terminal-status.success {
+	color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen));
+}
+
+.sc-inline-terminal-status.error {
+	color: var(--vscode-errorForeground);
+}
+
+.sc-inline-terminal-container {
+	height: 192px;
+	min-height: 120px;
+	overflow: hidden;
+}
+
+/* ===== File Views ===== */
+.sc-file-read-view,
+.sc-file-write-view,
+.sc-file-edit-view {
+	border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+	border-radius: 4px;
+	overflow: hidden;
+	margin: 4px 0;
+}
+
+.sc-file-view-container {
+	min-height: 60px;
+	overflow: hidden;
+}
+
+.sc-file-edit-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 4px 10px;
+	background: var(--vscode-sideBar-background);
+	border-bottom: 1px solid var(--vscode-widget-border, transparent);
+	font-size: 11px;
+}
+
+.sc-file-edit-path {
+	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
+	color: var(--vscode-foreground);
+}
+
+.sc-file-edit-toggle {
+	background: transparent;
+	border: 1px solid var(--vscode-button-border, var(--vscode-widget-border));
+	border-radius: 3px;
+	padding: 2px 8px;
+	font-size: 10px;
+	color: var(--vscode-foreground);
+	cursor: pointer;
+}
+
+.sc-file-edit-toggle:hover {
+	background: var(--vscode-button-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+/* Write view decorations */
+.sc-write-view-line {
+	background: rgba(74, 222, 128, 0.08) !important;
+}
+
+.sc-write-view-glyph::before {
+	content: "+";
+	color: #4ade80;
+	font-weight: bold;
+	font-size: 11px;
+	position: absolute;
+	left: 2px;
+}
+
+/* Legacy tool status styles (keep for compatibility) */
 .sc-tool-status {
 	font-size: 10px;
 }

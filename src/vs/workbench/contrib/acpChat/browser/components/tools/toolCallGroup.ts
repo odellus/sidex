@@ -8,10 +8,16 @@ export interface ToolCallInfo {
 	input: string;
 	output: string;
 	status: string;
+	// Extended fields from ACP notifications
+	kind?: string;
+	content?: Array<Record<string, unknown>>;
+	rawInput?: unknown;
+	rawOutput?: unknown;
 }
 
 export class ToolCallGroup extends Component {
 	private _items: Map<string, ToolCallItem> = new Map();
+	private _toolData: Map<string, Partial<ToolCallInfo>> = new Map();
 
 	constructor() {
 		super('div', 'sc-tool-block');
@@ -23,32 +29,70 @@ export class ToolCallGroup extends Component {
 
 		if (sessionUpdate === 'tool_call') {
 			const tc = this._extractToolCallInfo(update);
+			console.log(`[ToolCallGroup] tool_call: id="${tc.id}" name="${tc.name}" kind="${tc.kind}"`);
+			this._toolData.set(tc.id, tc);
 			const item = new ToolCallItem(tc);
 			item.appendTo(this.element);
 			this._register(item);
 			this._items.set(tc.id, item);
+			console.log(`[ToolCallGroup] items map now has ${this._items.size} entries:`, Array.from(this._items.keys()));
 		}
 
 		if (sessionUpdate === 'tool_call_update') {
 			const toolCallId = (update.tool_call_id ?? update.toolCallId) as string || '';
+			console.log(`[ToolCallGroup] tool_call_update: toolCallId="${toolCallId}" status="${update.status}" hasContent=${!!update.content}`);
 			const item = this._items.get(toolCallId);
-			if (!item) return;
+			if (!item) {
+				console.error(`[ToolCallGroup] ERROR: tool_call_update for unknown toolCallId="${toolCallId}"! Known IDs:`, Array.from(this._items.keys()));
+				return;
+			}
 
 			const status = update.status as string;
 			if (status) item.updateStatus(status);
+
+			// Forward content blocks to the item (terminal output, text, etc.)
+			const newContent = update.content as Array<Record<string, unknown>> | undefined;
+			if (newContent) {
+				for (const block of newContent) {
+					item.appendContentBlock(block);
+				}
+			}
+
+			// Accumulate data for tracking
+			const existingData = this._toolData.get(toolCallId) || {};
+			if (newContent) {
+				existingData.content = [...(existingData.content || []), ...newContent];
+				this._toolData.set(toolCallId, existingData);
+			}
+
+			// Merge rawOutput
+			const newRawOutput = update.rawOutput as Record<string, unknown> | undefined;
+			if (newRawOutput) {
+				existingData.rawOutput = {
+					...(typeof existingData.rawOutput === 'object' ? existingData.rawOutput : {}),
+					...newRawOutput,
+				};
+				this._toolData.set(toolCallId, existingData);
+			}
 		}
 	}
 
 	private _extractToolCallInfo(update: Record<string, unknown>): ToolCallInfo {
-		const toolCallId = update.toolCallId as string || '';
-		const name = update.title as string || '';
-		const input = update.rawInput as unknown;
+		const toolCallId = (update.toolCallId ?? update.tool_call_id) as string || '';
+		const name = (update.title ?? update.name) as string || '';
+		const kind = update.kind as string | undefined;
+		const rawInput = update.rawInput ?? update.raw_input;
+		const content = update.content as Array<Record<string, unknown>> | undefined;
+
 		return {
 			id: toolCallId,
 			name,
-			input: typeof input === 'string' ? input : JSON.stringify(input),
+			input: typeof rawInput === 'string' ? rawInput : JSON.stringify(rawInput),
 			output: '',
 			status: 'running',
+			kind,
+			content: content || [],
+			rawInput,
 		};
 	}
 

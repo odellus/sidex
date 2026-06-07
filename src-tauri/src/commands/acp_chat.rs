@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
-use sidex_acp::{AgentConfig, AcpSessionManager, SessionEvent};
+use sidex_acp::{AgentConfig, AcpSessionManager, SessionEvent, TerminalEvent};
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +19,7 @@ use sidex_acp::{AgentConfig, AcpSessionManager, SessionEvent};
 pub struct AcpChatState {
     pub session_manager: Arc<AcpSessionManager>,
     pub global_events: tokio::sync::broadcast::Sender<SessionEvent>,
+    pub terminal_events: tokio::sync::broadcast::Sender<TerminalEvent>,
     app_handle: Mutex<Option<AppHandle>>,
     bridge_started: Mutex<bool>,
 }
@@ -28,9 +29,11 @@ impl AcpChatState {
         let agent_manager = Arc::new(sidex_acp::AgentManager::new());
         let session_manager = Arc::new(AcpSessionManager::new(agent_manager));
         let (global_events, _) = tokio::sync::broadcast::channel(1024);
+        let (terminal_events, _) = tokio::sync::broadcast::channel(256);
         Self {
             session_manager,
             global_events,
+            terminal_events,
             app_handle: Mutex::new(None),
             bridge_started: Mutex::new(false),
         }
@@ -73,24 +76,62 @@ impl AcpChatState {
         };
 
         let mut rx = self.global_events.subscribe();
+        let app2 = app.clone();
         tokio::spawn(async move {
-            while let Ok(event) = rx.recv().await {
-                let payload = match event {
-                    SessionEvent::Update { session_id, update } => {
-                        serde_json::json!({
-                            "type": "update",
-                            "sessionId": session_id,
-                            "update": update,
-                        })
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let payload = match event {
+                            SessionEvent::Update { session_id, update } => {
+                                serde_json::json!({
+                                    "type": "update",
+                                    "sessionId": session_id,
+                                    "update": update,
+                                })
+                            }
+                            SessionEvent::Disconnected { session_id } => {
+                                serde_json::json!({
+                                    "type": "disconnected",
+                                    "sessionId": session_id,
+                                })
+                            }
+                        };
+                        let _ = app2.emit("acp:sessionUpdate", payload);
                     }
-                    SessionEvent::Disconnected { session_id } => {
-                        serde_json::json!({
-                            "type": "disconnected",
-                            "sessionId": session_id,
-                        })
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        log::warn!("[acp_chat] session event bridge lagged {} events", n);
                     }
-                };
-                let _ = app.emit("acp:sessionUpdate", payload);
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+
+        // Forward terminal events to Tauri events
+        let mut term_rx = self.terminal_events.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match term_rx.recv().await {
+                    Ok(event) => {
+                        match event {
+                            TerminalEvent::Data { terminal_id, data } => {
+                                let _ = app.emit("acp-terminal-data", serde_json::json!({
+                                    "terminalId": terminal_id,
+                                    "data": data,
+                                }));
+                            }
+                            TerminalEvent::Exit { terminal_id, exit_code } => {
+                                let _ = app.emit("acp-terminal-exit", serde_json::json!({
+                                    "terminalId": terminal_id,
+                                    "exitCode": exit_code,
+                                }));
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        log::warn!("[acp_chat] terminal event bridge lagged {} events", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
             }
         });
     }
@@ -185,6 +226,7 @@ pub async fn acp_chat_new_session(
             &request.connection_id,
             request.mcp_servers,
             state.global_events.clone(),
+            state.terminal_events.clone(),
         )
         .await
         .map_err(|e| {
@@ -224,6 +266,7 @@ pub async fn acp_chat_load_session(
             &request.cwd,
             request.mcp_servers,
             state.global_events.clone(),
+            state.terminal_events.clone(),
         )
         .await
         .map_err(|e| {
@@ -263,6 +306,7 @@ pub async fn acp_chat_switch_session(
             &request.cwd,
             request.mcp_servers,
             state.global_events.clone(),
+            state.terminal_events.clone(),
         )
         .await
         .map_err(|e| {
@@ -375,6 +419,48 @@ pub async fn acp_chat_set_config_option(
             log::error!("[acp_chat] set_config_option failed: {e}");
             e.to_string()
         })
+}
+
+// ─── Terminal output polling ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct TerminalOutputRequest {
+    pub terminal_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TerminalOutputResponse {
+    pub output: String,
+    pub is_alive: bool,
+    pub exit_code: Option<i32>,
+    pub cwd: Option<String>,
+    pub command: Option<String>,
+}
+
+/// Poll terminal output — frontend calls this to get accumulated output from
+/// a backend PTY that the agent created via terminal/create.
+#[tauri::command]
+pub async fn acp_terminal_output(
+    state: State<'_, Arc<AcpChatState>>,
+    request: TerminalOutputRequest,
+) -> Result<TerminalOutputResponse, String> {
+    // Search all active sessions for this terminal
+    let sessions = state.session_manager.list_active_sessions().await;
+    for session_id in &sessions {
+        if let Some(session) = state.session_manager.get_session(session_id).await {
+            let terminals = session.active_terminals.lock().await;
+            if let Some(term) = terminals.get(&request.terminal_id) {
+                return Ok(TerminalOutputResponse {
+                    output: term.output.clone(),
+                    is_alive: !term.exited,
+                    exit_code: term.exit_code,
+                    cwd: term.cwd.clone(),
+                    command: Some(term.command.clone()),
+                });
+            }
+        }
+    }
+    Err(format!("Terminal not found: {}", request.terminal_id))
 }
 
 

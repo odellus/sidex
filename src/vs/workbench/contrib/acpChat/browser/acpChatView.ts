@@ -220,6 +220,7 @@ export class AcpChatViewPane extends ViewPane {
 			this._lastGroupComp.appendNotification(notification);
 		} else {
 			// Different type — create new group component
+			console.log(`[AcpChatView] NEW GROUP: type="${groupType}" (was "${this._lastGroupType}") sessionUpdate="${sessionUpdate}"`);
 			if (this._lastGroupComp) {
 				this._lastGroupComp.stopStreaming();
 			}

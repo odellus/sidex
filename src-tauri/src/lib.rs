@@ -865,6 +865,7 @@ pub fn run() {
             commands::acp_chat_close_session,
             commands::acp_chat_list_sessions,
             commands::acp_chat_set_config_option,
+            commands::acp_terminal_output,
 
             // Menu i18n
             commands::update_menu_labels,

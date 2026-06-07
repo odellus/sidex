@@ -9,7 +9,7 @@ use tokio::sync::{broadcast, Mutex};
 use tracing::info;
 
 use crate::agent::{AgentConfig, AgentManager};
-use crate::session::AcpSession;
+use crate::session::{AcpSession, TerminalEvent};
 
 pub use crate::session::SessionEvent;
 
@@ -50,6 +50,7 @@ impl AcpSessionManager {
         connection_id: &str,
         mcp_servers: Vec<Value>,
         forward_tx: broadcast::Sender<SessionEvent>,
+        terminal_forward_tx: broadcast::Sender<TerminalEvent>,
     ) -> Result<Arc<AcpSession>> {
         let session = {
             let mut conns = self.connections.lock().await;
@@ -65,12 +66,33 @@ impl AcpSessionManager {
         let mut rx = session.subscribe();
         let sid = session_id.clone();
         tokio::spawn(async move {
-            while let Ok(event) = rx.recv().await {
-                let _ = forward_tx.send(event);
+            loop {
+                match rx.recv().await {
+                    Ok(event) => { let _ = forward_tx.send(event); }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("[acp] session event forwarder lagged {} events for session {}", n, sid);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
             }
             let _ = forward_tx.send(SessionEvent::Disconnected {
                 session_id: sid.clone(),
             });
+        });
+
+        // Forward terminal events to the global channel
+        let mut term_rx = session.subscribe_terminal_events();
+        let tid = session_id.clone();
+        tokio::spawn(async move {
+            loop {
+                match term_rx.recv().await {
+                    Ok(event) => { let _ = terminal_forward_tx.send(event); }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("[acp] terminal event forwarder lagged {} events for session {}", n, tid);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
         });
 
         self.sessions.lock().await.insert(session_id, session.clone());
@@ -86,6 +108,7 @@ impl AcpSessionManager {
         cwd: &str,
         mcp_servers: Vec<Value>,
         forward_tx: broadcast::Sender<SessionEvent>,
+        terminal_forward_tx: broadcast::Sender<TerminalEvent>,
     ) -> Result<Arc<AcpSession>> {
         let session = {
             let mut conns = self.connections.lock().await;
@@ -101,12 +124,33 @@ impl AcpSessionManager {
         let mut rx = session.subscribe();
         let sid = session_id.clone();
         tokio::spawn(async move {
-            while let Ok(event) = rx.recv().await {
-                let _ = forward_tx.send(event);
+            loop {
+                match rx.recv().await {
+                    Ok(event) => { let _ = forward_tx.send(event); }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("[acp] session event forwarder lagged {} events for session {}", n, sid);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
             }
             let _ = forward_tx.send(SessionEvent::Disconnected {
                 session_id: sid.clone(),
             });
+        });
+
+        // Forward terminal events
+        let mut term_rx = session.subscribe_terminal_events();
+        let tid = session_id.clone();
+        tokio::spawn(async move {
+            loop {
+                match term_rx.recv().await {
+                    Ok(event) => { let _ = terminal_forward_tx.send(event); }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("[acp] terminal event forwarder lagged {} events for session {}", n, tid);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
         });
 
         self.sessions.lock().await.insert(session_id, session.clone());
@@ -123,6 +167,7 @@ impl AcpSessionManager {
         cwd: &str,
         mcp_servers: Vec<Value>,
         forward_tx: broadcast::Sender<SessionEvent>,
+        terminal_forward_tx: broadcast::Sender<TerminalEvent>,
     ) -> Result<Arc<AcpSession>> {
         // 1. Get old session config before killing it
         let old_session = {
@@ -150,12 +195,33 @@ impl AcpSessionManager {
         let mut rx = new_session.subscribe();
         let sid = new_session_id.clone();
         tokio::spawn(async move {
-            while let Ok(event) = rx.recv().await {
-                let _ = forward_tx.send(event);
+            loop {
+                match rx.recv().await {
+                    Ok(event) => { let _ = forward_tx.send(event); }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("[acp] session event forwarder lagged {} events for session {}", n, sid);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
             }
             let _ = forward_tx.send(SessionEvent::Disconnected {
                 session_id: sid.clone(),
             });
+        });
+
+        // Forward terminal events
+        let mut term_rx = new_session.subscribe_terminal_events();
+        let tid = new_session_id.clone();
+        tokio::spawn(async move {
+            loop {
+                match term_rx.recv().await {
+                    Ok(event) => { let _ = terminal_forward_tx.send(event); }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("[acp] terminal event forwarder lagged {} events for session {}", n, tid);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
         });
 
         info!("Session switched: {} → {}", current_session_id, new_session_id);
@@ -200,6 +266,7 @@ impl AcpSessionManager {
         config_file: Option<String>,
         mcp_servers: Vec<Value>,
         forward_tx: broadcast::Sender<SessionEvent>,
+        terminal_forward_tx: broadcast::Sender<TerminalEvent>,
     ) -> Result<Arc<AcpSession>> {
         let mut final_args = args;
         if let Some(path) = config_file {
@@ -230,12 +297,33 @@ impl AcpSessionManager {
         let mut rx = session.subscribe();
         let sid = session_id.clone();
         tokio::spawn(async move {
-            while let Ok(event) = rx.recv().await {
-                let _ = forward_tx.send(event);
+            loop {
+                match rx.recv().await {
+                    Ok(event) => { let _ = forward_tx.send(event); }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("[acp] session event forwarder lagged {} events for session {}", n, sid);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
             }
             let _ = forward_tx.send(SessionEvent::Disconnected {
                 session_id: sid.clone(),
             });
+        });
+
+        // Forward terminal events
+        let mut term_rx = session.subscribe_terminal_events();
+        let tid = session_id.clone();
+        tokio::spawn(async move {
+            loop {
+                match term_rx.recv().await {
+                    Ok(event) => { let _ = terminal_forward_tx.send(event); }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("[acp] terminal event forwarder lagged {} events for session {}", n, tid);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
         });
 
         self.sessions.lock().await.insert(session_id, session.clone());

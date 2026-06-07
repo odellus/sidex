@@ -114,11 +114,29 @@ pub enum PromptTurnState {
 
 // ─── Terminal tracking ────────────────────────────────────────────────────
 
+/// Events broadcast when ACP session terminal state changes.
+#[derive(Clone, Debug)]
+pub enum TerminalEvent {
+    Data {
+        terminal_id: String,
+        data: String,
+    },
+    Exit {
+        terminal_id: String,
+        exit_code: Option<i32>,
+    },
+}
+
 /// Info about a terminal created by this session.
 pub struct SessionTerminal {
     handle: sidex_terminal::TermHandle,
-    #[allow(dead_code)]
     pty: sidex_terminal::PtyProcess,
+    /// Accumulated output — drain loop writes, agent + frontend read.
+    pub output: String,
+    pub exited: bool,
+    pub exit_code: Option<i32>,
+    pub command: String,
+    pub cwd: Option<String>,
 }
 
 // ─── AcpSession ─────────────────────────────────────────────────────────────
@@ -150,6 +168,8 @@ pub struct AcpSession {
     pub active_terminals: Arc<Mutex<HashMap<String, SessionTerminal>>>,
     /// Shared cell so the I/O task knows the current session ID.
     session_id_cell: Arc<Mutex<String>>,
+    /// Broadcast channel for terminal events (data, exit) — manager subscribes to forward to frontend.
+    terminal_events_tx: broadcast::Sender<TerminalEvent>,
 }
 
 impl AcpSession {
@@ -178,6 +198,7 @@ impl AcpSession {
         let mut stdout_rx = agent_events_tx_raw.subscribe();
 
         let events_tx = broadcast::Sender::new(1024);
+        let terminal_events_tx = broadcast::Sender::<TerminalEvent>::new(256);
         let pending_requests = Arc::new(Mutex::new(HashMap::<
             u64,
             oneshot::Sender<Result<Value, String>>,
@@ -190,6 +211,7 @@ impl AcpSession {
         let stdin_tx_clone = stdin_tx.clone();
         let active_terminals = Arc::new(Mutex::new(HashMap::<String, SessionTerminal>::new()));
         let active_terminals_for_io = active_terminals.clone();
+        let terminal_events_for_io = terminal_events_tx.clone();
         let shell_env = Arc::new(shell_env);
         let shell_env_for_io = shell_env.clone();
 
@@ -222,6 +244,7 @@ impl AcpSession {
                             &stdin_tx_clone,
                             &active_terminals_for_io,
                             &shell_env_for_io,
+                            &terminal_events_for_io,
                         )
                         .await
                         {
@@ -258,6 +281,7 @@ impl AcpSession {
             prompt_turn_state,
             active_terminals,
             session_id_cell,
+            terminal_events_tx,
         };
 
         acp_log!(
@@ -634,11 +658,9 @@ impl AcpSession {
 
         let result = self.request_no_timeout("session/prompt", req).await;
 
-        // Clear active terminals when turn ends
-        {
-            let mut active = self.active_terminals.lock().await;
-            active.clear();
-        }
+        // NOTE: active_terminals are NOT cleared here. They persist until
+        // the agent calls terminal/release or the session is cancelled.
+        // The frontend needs to access them after the prompt turn ends.
 
         match &result {
             Ok(resp) => {
@@ -673,6 +695,11 @@ impl AcpSession {
     pub fn subscribe(&self) -> broadcast::Receiver<SessionEvent> {
         self.events_tx.subscribe()
     }
+
+    /// Subscribe to terminal events (data, exit) for this session's terminals.
+    pub fn subscribe_terminal_events(&self) -> broadcast::Receiver<TerminalEvent> {
+        self.terminal_events_tx.subscribe()
+    }
 }
 
 // ─── I/O dispatch ───────────────────────────────────────────────────────────
@@ -685,6 +712,7 @@ async fn handle_agent_line(
     stdin_tx: &mpsc::Sender<String>,
     active_terminals: &Arc<Mutex<HashMap<String, SessionTerminal>>>,
     shell_env: &Arc<HashMap<String, String>>,
+    terminal_events_tx: &broadcast::Sender<TerminalEvent>,
 ) -> Result<()> {
     // 1. Try response first (has id + result/error, no method)
     if let Ok(msg) = serde_json::from_str::<JsonRpcMessage<acp::Response<Value>>>(line) {
@@ -729,9 +757,10 @@ async fn handle_agent_line(
             let active_terminals = active_terminals.clone();
             let stdin_tx = stdin_tx.clone();
             let shell_env = shell_env.clone();
+            let terminal_events_tx = terminal_events_tx.clone();
             let method = method.to_string();
             tokio::spawn(async move {
-                let result = handle_agent_request(&method, &params, active_terminals, &session_id, &shell_env).await;
+                let result = handle_agent_request(&method, &params, active_terminals, &session_id, &shell_env, &terminal_events_tx).await;
                 let response = match result {
                     Ok(res) => serde_json::json!({"jsonrpc": "2.0", "id": id, "result": res}),
                     Err(err) => serde_json::json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32600, "message": err}}),
@@ -782,6 +811,7 @@ async fn handle_agent_request(
     active_terminals: Arc<Mutex<HashMap<String, SessionTerminal>>>,
     _session_id: &str,
     shell_env: &HashMap<String, String>,
+    terminal_events_tx: &broadcast::Sender<TerminalEvent>,
 ) -> Result<Value, String> {
     match method {
         "fs/readTextFile" | "fs/read_text_file" => {
@@ -859,8 +889,8 @@ async fn handle_agent_request(
 
             let spawn_config = sidex_terminal::PtySpawnConfig {
                 shell: Some(shell),
-                args: Some(vec!["-c".to_string(), cmd_str]),
-                cwd: cwd.map(std::path::PathBuf::from),
+                args: Some(vec!["-c".to_string(), cmd_str.clone()]),
+                cwd: cwd.clone().map(std::path::PathBuf::from),
                 env,
                 size: sidex_terminal::TerminalSize { rows: 24, cols: 80 },
             };
@@ -873,25 +903,65 @@ async fn handle_agent_request(
                     let _ = pty.read_output(None);
                     {
                         let mut terminals = active_terminals.lock().await;
-                        terminals.insert(id.clone(), SessionTerminal { handle, pty });
+                        terminals.insert(id.clone(), SessionTerminal {
+                            handle,
+                            pty,
+                            output: String::new(),
+                            exited: false,
+                            exit_code: None,
+                            command: cmd_str,
+                            cwd,
+                        });
                     }
                     let active_terminals_clone = active_terminals.clone();
                     let drain_id = id.clone();
+                    let events_tx = terminal_events_tx.clone();
                     tokio::spawn(async move {
                         loop {
                             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                            let is_alive = {
-                                let terminals = active_terminals_clone.lock().await;
-                                if let Some(term) = terminals.get(&drain_id) {
+                            let (new_data, is_alive, exit_code) = {
+                                let mut terminals = active_terminals_clone.lock().await;
+                                if let Some(term) = terminals.get_mut(&drain_id) {
+                                    if term.exited {
+                                        break;
+                                    }
                                     match term.pty.read_output(None) {
-                                        Ok(result) => result.is_alive,
-                                        Err(_) => false,
+                                        Ok(result) => {
+                                            let text = result.lines.iter()
+                                                .map(|l| l.text.as_str())
+                                                .collect::<Vec<_>>()
+                                                .join("");
+                                            if !text.is_empty() {
+                                                term.output.push_str(&text);
+                                            }
+                                            let exit = if !result.is_alive {
+                                                term.exited = true;
+                                                term.exit_code = term.pty.exit_code();
+                                                term.exit_code
+                                            } else {
+                                                None
+                                            };
+                                            (text, result.is_alive, exit)
+                                        }
+                                        Err(_) => (String::new(), false, None),
                                     }
                                 } else {
                                     break;
                                 }
                             };
+                            // Broadcast data event to frontend
+                            if !new_data.is_empty() {
+                                let _ = events_tx.send(TerminalEvent::Data {
+                                    terminal_id: drain_id.clone(),
+                                    data: new_data,
+                                });
+                            }
+                            // Broadcast exit event
                             if !is_alive {
+                                let _ = events_tx.send(TerminalEvent::Exit {
+                                    terminal_id: drain_id.clone(),
+                                    exit_code,
+                                });
                                 break;
                             }
                         }
@@ -909,21 +979,17 @@ async fn handle_agent_request(
             let terminals = active_terminals.lock().await;
             match terminals.get(id) {
                 Some(term) => {
-                    match term.pty.read_output(None) {
-                        Ok(result) => {
-                            let output = result.lines.into_iter().map(|l| l.text).collect::<Vec<_>>().join("");
-                            let truncated = result.dropped > 0;
-                            let mut resp = acp::TerminalOutputResponse::new(output, truncated);
-                            if !result.is_alive {
-                                let exit_code = term.pty.exit_code().map(|c| c as u32);
-                                let exit_status = TerminalExitStatus::new().exit_code(exit_code);
-                                resp = resp.exit_status(exit_status);
-                            }
-                            serde_json::to_value(ClientResponse::TerminalOutputResponse(resp))
-                                .map_err(|e| e.to_string())
-                        }
-                        Err(e) => Err(format!("failed to read terminal: {e}")),
+                    // Read from accumulated buffer (drain loop is sole PTY reader)
+                    let output = term.output.clone();
+                    let truncated = false;
+                    let mut resp = acp::TerminalOutputResponse::new(output, truncated);
+                    if term.exited {
+                        let exit_code = term.exit_code.map(|c| c as u32);
+                        let exit_status = TerminalExitStatus::new().exit_code(exit_code);
+                        resp = resp.exit_status(exit_status);
                     }
+                    serde_json::to_value(ClientResponse::TerminalOutputResponse(resp))
+                        .map_err(|e| e.to_string())
                 }
                 None => Err("terminal not found".into()),
             }
@@ -961,10 +1027,25 @@ async fn handle_agent_request(
         }
         "terminal/release" | "terminal/releaseTerminal" => {
             let id = params.get("terminalId").and_then(|v| v.as_str()).ok_or("missing terminalId")?;
-            let mut terminals = active_terminals.lock().await;
-            if let Some(term) = terminals.remove(id) {
-                let _ = term.pty.kill_tree();
+            // Kill the PTY but keep the terminal in the map so the frontend
+            // can still poll output. Remove after 30s.
+            {
+                let terminals = active_terminals.lock().await;
+                if let Some(term) = terminals.get(id) {
+                    let _ = term.pty.kill_tree();
+                }
             }
+            let active_for_cleanup = active_terminals.clone();
+            let release_id = id.to_string();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                let mut terminals = active_for_cleanup.lock().await;
+                if let Some(term) = terminals.get(&release_id) {
+                    if term.exited {
+                        terminals.remove(&release_id);
+                    }
+                }
+            });
             let resp = ReleaseTerminalResponse::new();
             serde_json::to_value(ClientResponse::ReleaseTerminalResponse(resp))
                 .map_err(|e| e.to_string())
