@@ -164,7 +164,7 @@ export function renderCodeBlocks(
 
 		// Hide the raw <pre> fallback, show the editor
 		rawEl.parentElement!.style.display = 'none';
-		host.style.display = '';
+		host.style.display = 'block';
 	}
 
 	return disposables;
