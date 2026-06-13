@@ -22,13 +22,12 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use agent_client_protocol_schema as acp;
 use acp::{
     AgentNotification, CancelNotification, ClientCapabilities,
-    ClientResponse, ContentBlock, FileSystemCapabilities, Implementation,
-    InitializeRequest, JsonRpcMessage, KillTerminalResponse, ListSessionsRequest,
-    LoadSessionRequest, NewSessionRequest, Notification, PermissionOptionId,
-    PromptRequest, ProtocolVersion, ReadTextFileResponse, ReleaseTerminalResponse,
-    Request, RequestId, RequestPermissionResponse, Response, SelectedPermissionOutcome,
-    SessionConfigOption, SessionId, SessionModeState, TerminalExitStatus,
-    WaitForTerminalExitResponse, WriteTextFileResponse,
+    ContentBlock, FileSystemCapabilities, Implementation,
+    InitializeRequest, JsonRpcMessage, ListSessionsRequest,
+    LoadSessionRequest, NewSessionRequest, Notification,
+    PromptRequest, ProtocolVersion,
+    Request, RequestId, Response,
+    SessionConfigOption, SessionId, SessionModeState,
 };
 
 use crate::agent::{AgentConfig, AgentManager};
@@ -36,7 +35,7 @@ use crate::agent::{AgentConfig, AgentManager};
 // ─── File logger ───────────────────────────────────────────────────────────
 
 /// Dedicated file logger. Never writes to stdout/stderr.
-struct FileLogger {
+pub(crate) struct FileLogger {
     file: StdMutex<std::fs::File>,
 }
 
@@ -58,21 +57,22 @@ impl FileLogger {
         }
     }
 
-    fn log(&self, level: &str, msg: &str) {
+    pub(crate) fn log(&self, level: &str, msg: &str) {
         let ts = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
         let line = format!("[{}] [{}] {}\n", ts, level, msg);
         let _ = self.file.lock().unwrap().write_all(line.as_bytes());
     }
 }
 
-fn logger() -> &'static FileLogger {
+pub(crate) fn logger() -> &'static FileLogger {
     static INSTANCE: OnceLock<FileLogger> = OnceLock::new();
     INSTANCE.get_or_init(FileLogger::new)
 }
 
+#[macro_export]
 macro_rules! acp_log {
     ($level:expr, $($arg:tt)*) => {
-        logger().log($level, &format!($($arg)*))
+        $crate::session::logger().log($level, &format!($($arg)*))
     };
 }
 
@@ -129,14 +129,47 @@ pub enum TerminalEvent {
 
 /// Info about a terminal created by this session.
 pub struct SessionTerminal {
-    handle: sidex_terminal::TermHandle,
-    pty: sidex_terminal::PtyProcess,
+    pub handle: sidex_terminal::TermHandle,
+    pub pty: sidex_terminal::PtyProcess,
     /// Accumulated output — drain loop writes, agent + frontend read.
     pub output: String,
     pub exited: bool,
     pub exit_code: Option<i32>,
     pub command: String,
     pub cwd: Option<String>,
+}
+
+// ─── Orchestration types ────────────────────────────────────────────────────
+
+/// Delegation state machine for orchestrator agents.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum DelegationState {
+    #[default]
+    NotCalled,
+    WaitingForResponse,
+    Responding,
+}
+
+/// A task in the orchestrator's task list.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Task {
+    pub id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: TaskStatus,
+    pub assigned_to: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Task execution status.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
 }
 
 // ─── AcpSession ─────────────────────────────────────────────────────────────
@@ -158,7 +191,7 @@ pub struct AcpSession {
 
     stdin_tx: mpsc::Sender<String>,
     pending_requests: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>,
-    events_tx: broadcast::Sender<SessionEvent>,
+    pub events_tx: broadcast::Sender<SessionEvent>,
     next_id: AtomicU64,
     _io_task: tokio::task::JoinHandle<()>,
 
@@ -170,6 +203,17 @@ pub struct AcpSession {
     session_id_cell: Arc<Mutex<String>>,
     /// Broadcast channel for terminal events (data, exit) — manager subscribes to forward to frontend.
     terminal_events_tx: broadcast::Sender<TerminalEvent>,
+    
+    /// Orchestration: delegation state machine
+    pub delegation_state: Arc<Mutex<DelegationState>>,
+    /// Orchestration: task list
+    pub task_list: Arc<Mutex<Vec<Task>>>,
+    /// Orchestration: task queue (pending tasks to process)
+    pub task_queue: Arc<Mutex<std::collections::VecDeque<Task>>>,
+    /// Orchestration: queued prompts
+    queue: Arc<Mutex<Vec<Vec<Value>>>>,
+    /// Orchestration: manager reference (set after session is added to manager)
+    manager_cell: Arc<Mutex<Option<Arc<crate::manager::AcpSessionManager>>>>,
 }
 
 impl AcpSession {
@@ -214,6 +258,9 @@ impl AcpSession {
         let terminal_events_for_io = terminal_events_tx.clone();
         let shell_env = Arc::new(shell_env);
         let shell_env_for_io = shell_env.clone();
+        let manager_cell = Arc::new(Mutex::new(None::<Arc<crate::manager::AcpSessionManager>>));
+        let manager_cell_for_io = manager_cell.clone();
+        let agent_config_for_io = config.clone();
 
         let connection_id = uuid::Uuid::new_v4().to_string();
         let connection_id_for_io = connection_id.clone();
@@ -245,6 +292,8 @@ impl AcpSession {
                             &active_terminals_for_io,
                             &shell_env_for_io,
                             &terminal_events_for_io,
+                            &manager_cell_for_io,
+                            &agent_config_for_io,
                         )
                         .await
                         {
@@ -282,6 +331,11 @@ impl AcpSession {
             active_terminals,
             session_id_cell,
             terminal_events_tx,
+            delegation_state: Arc::new(Mutex::new(DelegationState::NotCalled)),
+            task_list: Arc::new(Mutex::new(Vec::new())),
+            task_queue: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            queue: Arc::new(Mutex::new(Vec::new())),
+            manager_cell,
         };
 
         acp_log!(
@@ -700,6 +754,50 @@ impl AcpSession {
     pub fn subscribe_terminal_events(&self) -> broadcast::Receiver<TerminalEvent> {
         self.terminal_events_tx.subscribe()
     }
+
+    /// Set manager reference (called after session is added to manager).
+    pub async fn set_manager(&self, manager: Arc<crate::manager::AcpSessionManager>) {
+        *self.manager_cell.lock().await = Some(manager);
+    }
+
+    /// Get manager reference.
+    pub async fn get_manager(&self) -> Option<Arc<crate::manager::AcpSessionManager>> {
+        self.manager_cell.lock().await.clone()
+    }
+
+    // ─── Queue methods ──────────────────────────────────────────────────────
+
+    /// Add a prompt to the queue.
+    pub async fn queue_add(&self, blocks: Vec<Value>) -> Result<()> {
+        self.queue.lock().await.push(blocks);
+        Ok(())
+    }
+
+    /// Get the current queue length.
+    pub async fn queue_len(&self) -> usize {
+        self.queue.lock().await.len()
+    }
+
+    /// List queued items.
+    pub async fn queue_list(&self) -> Vec<Vec<Value>> {
+        self.queue.lock().await.clone()
+    }
+
+    /// Clear the queue.
+    pub async fn queue_clear(&self) {
+        self.queue.lock().await.clear();
+    }
+
+    /// Remove an item from the queue by index.
+    pub async fn queue_remove(&self, index: usize) -> Option<()> {
+        let mut queue = self.queue.lock().await;
+        if index < queue.len() {
+            queue.remove(index);
+            Some(())
+        } else {
+            None
+        }
+    }
 }
 
 // ─── I/O dispatch ───────────────────────────────────────────────────────────
@@ -713,6 +811,8 @@ async fn handle_agent_line(
     active_terminals: &Arc<Mutex<HashMap<String, SessionTerminal>>>,
     shell_env: &Arc<HashMap<String, String>>,
     terminal_events_tx: &broadcast::Sender<TerminalEvent>,
+    manager_cell: &Arc<Mutex<Option<Arc<crate::manager::AcpSessionManager>>>>,
+    agent_config: &AgentConfig,
 ) -> Result<()> {
     // 1. Try response first (has id + result/error, no method)
     if let Ok(msg) = serde_json::from_str::<JsonRpcMessage<acp::Response<Value>>>(line) {
@@ -743,9 +843,6 @@ async fn handle_agent_line(
     }
 
     // 2. Try request from agent (has id + method)
-    // Parse as raw Value first — AgentRequest is #[serde(untagged)] and variants
-    // with identical fields (terminal/*) all deserialize as the first match.
-    // We MUST route by method and access params as raw JSON, matching crow-ui.
     if let Ok(val) = serde_json::from_str::<Value>(line) {
         if let (Some(id_val), Some(method)) = (
             val.get("id"),
@@ -758,9 +855,19 @@ async fn handle_agent_line(
             let stdin_tx = stdin_tx.clone();
             let shell_env = shell_env.clone();
             let terminal_events_tx = terminal_events_tx.clone();
+            let manager = manager_cell.lock().await.clone();
+            let agent_config = agent_config.clone();
             let method = method.to_string();
             tokio::spawn(async move {
-                let result = handle_agent_request(&method, &params, active_terminals, &session_id, &shell_env, &terminal_events_tx).await;
+                let ctx = crate::tools::ToolContext {
+                    active_terminals,
+                    session_id,
+                    shell_env,
+                    terminal_events_tx,
+                    manager,
+                    agent_config,
+                };
+                let result = crate::tools::route_tool_request(&method, &params, &ctx).await;
                 let response = match result {
                     Ok(res) => serde_json::json!({"jsonrpc": "2.0", "id": id, "result": res}),
                     Err(err) => serde_json::json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32600, "message": err}}),
@@ -805,269 +912,13 @@ async fn handle_agent_line(
     Ok(())
 }
 
-async fn handle_agent_request(
-    method: &str,
-    params: &Value,
-    active_terminals: Arc<Mutex<HashMap<String, SessionTerminal>>>,
-    _session_id: &str,
-    shell_env: &HashMap<String, String>,
-    terminal_events_tx: &broadcast::Sender<TerminalEvent>,
-) -> Result<Value, String> {
-    match method {
-        "fs/readTextFile" | "fs/read_text_file" => {
-            let path = params.get("path").and_then(|v| v.as_str()).ok_or("missing path")?;
-            let line = params.get("line").and_then(|v| v.as_u64()).map(|v| v as usize);
-            let limit = params.get("limit").and_then(|v| v.as_u64()).map(|v| v as usize);
-            match tokio::task::spawn_blocking({
-                let path = path.to_string();
-                move || sidex_workspace::file_ops::read_file(std::path::Path::new(&path))
-            })
-            .await
-            {
-                Ok(Ok(content)) => {
-                    let content = if line.is_some() || limit.is_some() {
-                        let lines: Vec<&str> = content.lines().collect();
-                        let start = line.map(|l| l.saturating_sub(1)).unwrap_or(0);
-                        let end = limit.map(|lim| (start + lim).min(lines.len())).unwrap_or(lines.len());
-                        lines[start..end].join("\n")
-                    } else {
-                        content
-                    };
-                    let resp = ReadTextFileResponse::new(content);
-                    serde_json::to_value(ClientResponse::ReadTextFileResponse(resp))
-                        .map_err(|e| e.to_string())
-                }
-                Ok(Err(e)) => Err(format!("failed to read file: {e}")),
-                Err(e) => Err(format!("task failed: {e}")),
-            }
-        }
-        "fs/writeTextFile" | "fs/write_text_file" => {
-            let path = params.get("path").and_then(|v| v.as_str()).ok_or("missing path")?;
-            let content = params.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            match tokio::task::spawn_blocking({
-                let path = path.to_string();
-                let content = content.to_string();
-                move || sidex_workspace::file_ops::write_file(std::path::Path::new(&path), &content)
-            })
-            .await
-            {
-                Ok(Ok(())) => {
-                    let resp = WriteTextFileResponse::new();
-                    serde_json::to_value(ClientResponse::WriteTextFileResponse(resp))
-                        .map_err(|e| e.to_string())
-                }
-                Ok(Err(e)) => Err(format!("failed to write file: {e}")),
-                Err(e) => Err(format!("task failed: {e}")),
-            }
-        }
-        "terminal/create" | "terminal/createTerminal" => {
-            let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            let args: Vec<String> = params.get("args")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default();
-            let mut env: HashMap<String, String> = shell_env.clone();
-            if let Some(env_arr) = params.get("env").and_then(|v| v.as_array()) {
-                for item in env_arr {
-                    if let (Some(name), Some(value)) = (item.get("name").and_then(|v| v.as_str()), item.get("value").and_then(|v| v.as_str())) {
-                        env.insert(name.to_string(), value.to_string());
-                    } else if let Some(s) = item.as_str() {
-                        if let Some((k, v)) = s.split_once('=') {
-                            env.insert(k.to_string(), v.to_string());
-                        }
-                    }
-                }
-            }
-            let cwd = params.get("cwd").and_then(|v| v.as_str()).map(String::from);
-
-            let shell = sidex_terminal::detect_default_shell();
-            let cmd_str = if args.is_empty() {
-                command.to_string()
-            } else {
-                format!("{} {}", command, args.join(" "))
-            };
-
-            let spawn_config = sidex_terminal::PtySpawnConfig {
-                shell: Some(shell),
-                args: Some(vec!["-c".to_string(), cmd_str.clone()]),
-                cwd: cwd.clone().map(std::path::PathBuf::from),
-                env,
-                size: sidex_terminal::TerminalSize { rows: 24, cols: 80 },
-            };
-
-            match tokio::task::spawn_blocking(move || sidex_terminal::PtyProcess::spawn(&spawn_config)).await
-            {
-                Ok(Ok(pty)) => {
-                    let handle = sidex_terminal::TermHandle::next();
-                    let id = format!("term_{}", handle.0);
-                    let _ = pty.read_output(None);
-                    {
-                        let mut terminals = active_terminals.lock().await;
-                        terminals.insert(id.clone(), SessionTerminal {
-                            handle,
-                            pty,
-                            output: String::new(),
-                            exited: false,
-                            exit_code: None,
-                            command: cmd_str,
-                            cwd,
-                        });
-                    }
-                    let active_terminals_clone = active_terminals.clone();
-                    let drain_id = id.clone();
-                    let events_tx = terminal_events_tx.clone();
-                    tokio::spawn(async move {
-                        loop {
-                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                            let (new_data, is_alive, exit_code) = {
-                                let mut terminals = active_terminals_clone.lock().await;
-                                if let Some(term) = terminals.get_mut(&drain_id) {
-                                    if term.exited {
-                                        break;
-                                    }
-                                    match term.pty.read_output(None) {
-                                        Ok(result) => {
-                                            let text = result.lines.iter()
-                                                .map(|l| l.text.as_str())
-                                                .collect::<Vec<_>>()
-                                                .join("");
-                                            if !text.is_empty() {
-                                                term.output.push_str(&text);
-                                            }
-                                            let exit = if !result.is_alive {
-                                                term.exited = true;
-                                                term.exit_code = term.pty.exit_code();
-                                                term.exit_code
-                                            } else {
-                                                None
-                                            };
-                                            (text, result.is_alive, exit)
-                                        }
-                                        Err(_) => (String::new(), false, None),
-                                    }
-                                } else {
-                                    break;
-                                }
-                            };
-                            // Broadcast data event to frontend
-                            if !new_data.is_empty() {
-                                let _ = events_tx.send(TerminalEvent::Data {
-                                    terminal_id: drain_id.clone(),
-                                    data: new_data,
-                                });
-                            }
-                            // Broadcast exit event
-                            if !is_alive {
-                                let _ = events_tx.send(TerminalEvent::Exit {
-                                    terminal_id: drain_id.clone(),
-                                    exit_code,
-                                });
-                                break;
-                            }
-                        }
-                    });
-                    let resp = acp::CreateTerminalResponse::new(acp::TerminalId::from(id));
-                    serde_json::to_value(ClientResponse::CreateTerminalResponse(resp))
-                        .map_err(|e| e.to_string())
-                }
-                Ok(Err(e)) => Err(format!("failed to create terminal: {e}")),
-                Err(e) => Err(format!("task failed: {e}")),
-            }
-        }
-        "terminal/output" | "terminal/terminalOutput" => {
-            let id = params.get("terminalId").and_then(|v| v.as_str()).ok_or("missing terminalId")?;
-            let terminals = active_terminals.lock().await;
-            match terminals.get(id) {
-                Some(term) => {
-                    // Read from accumulated buffer (drain loop is sole PTY reader)
-                    let output = term.output.clone();
-                    let truncated = false;
-                    let mut resp = acp::TerminalOutputResponse::new(output, truncated);
-                    if term.exited {
-                        let exit_code = term.exit_code.map(|c| c as u32);
-                        let exit_status = TerminalExitStatus::new().exit_code(exit_code);
-                        resp = resp.exit_status(exit_status);
-                    }
-                    serde_json::to_value(ClientResponse::TerminalOutputResponse(resp))
-                        .map_err(|e| e.to_string())
-                }
-                None => Err("terminal not found".into()),
-            }
-        }
-        "terminal/waitForExit" | "terminal/wait_for_exit" => {
-            let id = params.get("terminalId").and_then(|v| v.as_str()).ok_or("missing terminalId")?;
-            loop {
-                let terminals = active_terminals.lock().await;
-                match terminals.get(id) {
-                    Some(term) => {
-                        if !term.pty.is_alive() {
-                            let exit_code = term.pty.exit_code().map(|c| c as u32);
-                            let exit_status = TerminalExitStatus::new()
-                                .exit_code(exit_code);
-                            let resp = WaitForTerminalExitResponse::new(exit_status);
-                            return serde_json::to_value(ClientResponse::WaitForTerminalExitResponse(resp))
-                                .map_err(|e| e.to_string());
-                        }
-                    }
-                    None => return Err("terminal not found".into()),
-                }
-                drop(terminals);
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
-        "terminal/kill" | "terminal/killTerminal" => {
-            let id = params.get("terminalId").and_then(|v| v.as_str()).ok_or("missing terminalId")?;
-            let terminals = active_terminals.lock().await;
-            if let Some(term) = terminals.get(id) {
-                let _ = term.pty.kill_tree();
-            }
-            let resp = KillTerminalResponse::new();
-            serde_json::to_value(ClientResponse::KillTerminalResponse(resp))
-                .map_err(|e| e.to_string())
-        }
-        "terminal/release" | "terminal/releaseTerminal" => {
-            let id = params.get("terminalId").and_then(|v| v.as_str()).ok_or("missing terminalId")?;
-            // Kill the PTY but keep the terminal in the map so the frontend
-            // can still poll output. Remove after 30s.
-            {
-                let terminals = active_terminals.lock().await;
-                if let Some(term) = terminals.get(id) {
-                    let _ = term.pty.kill_tree();
-                }
-            }
-            let active_for_cleanup = active_terminals.clone();
-            let release_id = id.to_string();
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                let mut terminals = active_for_cleanup.lock().await;
-                if let Some(term) = terminals.get(&release_id) {
-                    if term.exited {
-                        terminals.remove(&release_id);
-                    }
-                }
-            });
-            let resp = ReleaseTerminalResponse::new();
-            serde_json::to_value(ClientResponse::ReleaseTerminalResponse(resp))
-                .map_err(|e| e.to_string())
-        }
-        "session/requestPermission" | "session/request_permission" => {
-            let outcome = SelectedPermissionOutcome::new(PermissionOptionId::from("allow-once"));
-            let resp = RequestPermissionResponse::new(acp::RequestPermissionOutcome::Selected(outcome));
-            serde_json::to_value(ClientResponse::RequestPermissionResponse(resp))
-                .map_err(|e| e.to_string())
-        }
-        _ => {
-            acp_log!("WARN", "Unhandled agent request: {}", method);
-            Err(format!("unsupported method: {}", method))
-        }
-    }
-}
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use acp::{ClientResponse, ReadTextFileResponse};
 
     /// Verify that TerminalOutputResponse serializes to the exact JSON shape
     /// the crow-cli agent expects, including exit_status.

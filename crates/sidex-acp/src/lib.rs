@@ -8,6 +8,7 @@
 mod agent;
 pub mod manager;
 pub mod session;
+pub mod tools;
 
 pub use agent::{AgentConfig, AgentManager};
 pub use manager::{AcpSessionManager, SessionEvent};

@@ -234,6 +234,9 @@ pub async fn acp_chat_new_session(
             e.to_string()
         })?;
 
+    // Set manager reference so orchestration tools can access other sessions
+    session.set_manager(state.session_manager.clone()).await;
+
     Ok(NewSessionResponse {
         session_id: session.session_id(),
         config_options: session.config_options(),
@@ -273,6 +276,9 @@ pub async fn acp_chat_load_session(
             log::error!("[acp_chat] load_session failed: {e}");
             e.to_string()
         })?;
+
+    // Set manager reference so orchestration tools can access other sessions
+    session.set_manager(state.session_manager.clone()).await;
 
     Ok(NewSessionResponse {
         session_id: session.session_id(),

@@ -24,7 +24,7 @@ parking_lot = { workspace = true }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 agent-client-protocol-schema = "0.13.4"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 
 [lints]

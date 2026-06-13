@@ -1,238 +1,137 @@
-# Markdown Preview in .deb: The Path Forward
-
-## Current State
-
-**What works:**
-- Markdown preview works in `npx tauri dev` ✅
-- Markdown preview works when running the binary directly from `target/release/` ✅
-- Language configuration loading works in all contexts ✅
-- Auto-surround for all languages works in all contexts ✅
-
-**What doesn't work:**
-- Markdown preview in the installed `.deb` package ❌
-- Error: `[Warning] The Web Worker Extension Host did not start in 60s, that might be a problem.`
-
-## The Root Cause
-
-The markdown preview feature is implemented in the `markdown-language-features` extension, which runs in the **web worker extension host**. This is VSCode's architecture for running Node.js extensions in a web context.
-
-The web worker extension host requires:
-1. An iframe that loads `webWorkerExtensionHostIframe.html`
-2. A blob worker that imports `extensionHostWorkerMain.js`
-3. Multiple JS modules loaded via relative imports
-
-**Why it works in dev mode:**
-
-Hello!
-- Vite serves files from `dist/` directly
-- All paths resolve correctly via the dev server
-- The iframe and worker can load their dependencies
-
-**Why it breaks in .deb:**
-- Tauri embeds the frontend assets in the binary
-- Files are served via `tauri://` protocol
-- The iframe tries to load `tauri://localhost/assets/webWorkerExtensionHostIframe-DWTsNr7i.html`
-- Path resolution fails somewhere in the chain
-- The worker never starts
-- Extensions never load
-
-**What we've tried:**
-- Copied iframe HTML to `public/` directory → file exists but still doesn't load
-- Added special cases to `getWorkerUrl()` for other workers but not the iframe
-- Multiple agents have investigated but haven't solved the fundamental path resolution issue
-
-**The fundamental problem:**
-We're trying to make VSCode's complex web worker infrastructure work inside Tauri's embedded asset system. It's a mismatch between two different architectures.
-
-## Two Paths Forward
-
-### Option 1: Sidex Extension SDK (WASM-based)
-
-**How it works:**
-- Rewrite markdown preview as a Rust extension using the sidex SDK
-- Compiles to WASM via `cargo build --target wasm32-wasip2`
-- Loaded directly by the Rust host via wasmtime
-- No iframe, no web worker, no `tauri://` protocol issues
-
-**Pros:**
-- Completely bypasses the web worker extension host problem
-- Works identically in dev mode and .deb
-- Lighter weight than Node.js extensions
-- Already have 6 working rust extensions as examples
-- Designed for this exact runtime from the start
-
-**Cons:**
-- **No `create-webview-panel` in the WIT yet** — can't open preview panels
-- Would need to extend the SDK to support webview creation
-- Requires implementing preview UI in Rust/WASM or via Tauri commands
-
-**Current WIT capabilities:**
-- Language features (completion, hover, diagnostics) ✅
-- Commands and UI (input boxes, quick picks) ✅
-- Workspace operations ✅
-- Webview support (receive messages, visibility) ✅
-- **Create webview panel** ❌ (not yet implemented)
-
-**What would need to be added:**
-- Add `create-webview-panel` to the WIT
-- Implement in the host using Tauri's webview API
-- Render markdown HTML in the webview
-
-### Option 2: Contrib (Direct Integration)
-
-**How it works:**
-- Build markdown preview as a contrib module in `src/vs/workbench/contrib/`
-- TypeScript code that runs in the main webview (not an extension)
-- Uses Monaco's webview API directly
-- No extension host dependency
-
-**Pros:**
-- Proven to work (we did this with ACP chat)
-- Full control, tight integration
-- No extension loading overhead
-- Works in all contexts (dev, binary, .deb)
-- Can use existing markdown rendering libraries
-
-**Cons:**
-- Tightly coupled to sidex core (not a separate extension)
-- Less portable than extension model
-- Need to manage markdown rendering ourselves
-
-**Current contrib capabilities:**
-- ACP chat (proven pattern) ✅
-- Can create webview panels ✅
-- Can render HTML ✅
-- Can communicate with Rust backend ✅
-
-**What would need to be built:**
-- Markdown parser/renderer (or use existing library)
-- Preview panel creation
-- Live preview updates on edit
-- Synchronization with editor
-
-## Recommendation
-
-**Go with Option 2 (Contrib) for now.**
-
-Here's why:
-
-1. **It's proven.** We already built ACP chat in contrib. We know it works in all contexts. We know how to create webview panels, render HTML, and communicate with the backend.
-
-2. **It solves the problem immediately.** The web worker extension host issue is complex and multiple agents have failed to solve it. Contrib bypasses it entirely.
-
-3. **Markdown preview is a core feature.** It's not a marketplace extension — it's table stakes for a modern editor. Having it tightly integrated is actually better than having it as an extension.
-
-4. **We can still use the SDK later.** Once we stabilize the core features, we can extend the SDK to support webview creation and migrate preview features to extensions if needed. But that's a future optimization, not a blocker.
-
-5. **The SDK is missing webview creation.** We'd need to add that to the WIT and implement it in the host. That's additional work on top of building the preview feature. Contrib gets us there faster.
-
-## Implementation Plan
-
-### Phase 1: Basic Markdown Preview (Contrib)
-
-1. **Create contrib module** at `src/vs/workbench/contrib/markdown/`
-   - `browser/markdownPreview.ts` — main preview logic
-   - `browser/markdownPreview.contribution.ts` — registration
-   - `browser/markdown.css` — preview styles
-
-2. **Use an existing markdown renderer**
-   - Options: `marked`, `markdown-it`, or roll our own
-   - Need to handle: headers, lists, code blocks, links, images, tables
-
-3. **Create preview command**
-   - Command ID: `markdown.showPreview`
-   - Opens preview panel in same editor area (not split)
-   - Renders markdown to HTML
-   - Updates on editor change
-
-4. **Handle resources**
-   - Images (relative paths)
-   - Links (internal and external)
-   - Code syntax highlighting (can use existing textmate grammars)
-
-### Phase 2: Live Preview
-
-1. **Editor change listener**
-   - Debounce updates (don't re-render on every keystroke)
-   - Scroll synchronization (optional)
-
-2. **Preview refresh**
-   - Re-render on content change
-   - Preserve scroll position
-
-### Phase 3: Polish
-
-1. **Security**
-   - Sanitize HTML output
-   - CSP for preview panel
-
-2. **Performance**
-   - Virtual scrolling for large documents
-   - Incremental rendering
-
-3. **Features**
-   - Export to HTML/PDF
-   - Print support
-   - Custom CSS themes
-
-## What This Means for the SDK
-
-We're not abandoning the sidex extension SDK. It's still the right long-term architecture for:
-- Language servers (completion, diagnostics, formatting)
-- Code actions and refactorings
-- Custom commands
-- Third-party extensions
-
-But for **markdown preview specifically**, contrib is the faster path to a working solution.
-
-Once we have the SDK webview capabilities implemented, we can:
-1. Migrate markdown preview to an extension
-2. Add typst preview as an extension
-3. Support third-party preview extensions
-4. Build a preview extension marketplace
-
-But that's future work. Right now, we need markdown preview to work in the .deb, and contrib gets us there.
-
-## What About the Web Worker Extension Host?
-
-We can leave it broken for now. Here's why:
-
-1. **The 6 rust extensions work.** They don't use the web worker host.
-
-2. **We don't need most VSCode extensions.** The 70+ Node.js extensions in `extensions/` are designed for a marketplace model we don't have. We can selectively enable what we need.
-
-3. **Language configurations are fixed.** We already implemented the `LanguageConfigurationFileHandler` that loads `language-configuration.json` from extensions. This works without the web worker host.
-
-4. **We can fix it later if needed.** Once we have more bandwidth, someone can debug the `tauri://` path resolution issue. But it's not blocking us.
-
-## Next Steps
-
-1. **Create the contrib module structure**
-   - Set up the directory and files
-   - Register the contribution
-
-2. **Implement basic markdown rendering**
-   - Choose a markdown library
-   - Create a simple preview command
-   - Test in dev mode
-
-3. **Build and test in .deb**
-   - Verify it works without the web worker host
-   - Confirm no path resolution issues
-
-4. **Polish and ship**
-   - Add live preview
-   - Handle resources (images, links)
-   - Document the feature
-
-## Summary
-
-**Problem:** Markdown preview doesn't work in .deb because the web worker extension host can't load its dependencies via the `tauri://` protocol.
-
-**Solution:** Build markdown preview as a contrib module that runs in the main webview, bypassing the extension host entirely.
-
-**Why this works:** Contrib modules don't use the web worker extension host. They run directly in the editor's webview and can create preview panels using Monaco's webview API. We already proved this pattern works with ACP chat.
-
-**Trade-off:** Tighter coupling to sidex core, but faster path to a working solution. We can migrate to the SDK later once webview support is added to the WIT.
-
-**Action:** Start building markdown preview in contrib. Get it working in all contexts (dev, binary, .deb). Polish and ship. Leave the web worker extension host broken for now — it's not blocking us.
+# INSTRUCTIONS
+
+- when given a task, examine the code deeply and understand the intent of the current code. examine the code surrounding it as well to understand the constraints that the context the code lives in puts on it.
+- understand the problem through this new light of how the code works. understand why it is acting the way it does through mental modeling of the workflow of the code.
+- propose a solution to this in a markdown file that will outline what it is you propose to change, highlight how this will not create regressions because you've carefully analyzed code for side effects.
+- execute on the solution you just documented using the approach above after taking one last look around to see if you missed anything. measure twice, cut once.
+- DO NOT rely only on logs to verify behavior. Always test end-to-end in the browser (localhost:1420). Check that the actual UI responds, not just that RPC calls succeed.
+- The user already has `npx tauri dev` running — don't ask them to start it. Rust auto-rebuilds in dev mode.
+- Be extremely careful with git operations. Never use `git revert`. Always `git diff` before destructive operations.
+
+## RESOURCES
+
+- we will be working with a lot of ACP so always fetch https://agentclientprotocol.com/llms.txt to better understand ACP specs if the topic arises, and it will arise often
+- The crow-cli agent implementation lives in `research/crow-cli/crow-cli/src/crow_cli/agent/main.py` — study it when debugging agent-side behavior
+- ACP protocol log: `~/.local/share/sidex/logs/acp.log` (can be large, use grep/sed to search)
+
+## ARCHITECTURE
+
+### ACP Chat Pipeline (end-to-end flow)
+
+The chat feature is a 4-layer pipeline. Understanding how data flows through all 4 layers is essential for debugging.
+
+```
+Frontend (TypeScript)    →  Tauri Commands (Rust)  →  ACP Session (Rust)  →  Agent Process (Python/crow-cli)
+acpStore.ts                 acp_chat.rs                 session.rs              main.py (crow-cli)
+acpChatView.ts              (invoke/listen)             manager.rs
+```
+
+**Event flow (agent → frontend):**
+- Agent writes JSON-RPC to stdout
+- `session.rs` I/O task reads lines, parses JSON-RPC, broadcasts via `events_tx: broadcast::Sender<SessionEvent>`
+- `manager.rs` forwarding task subscribes to `events_tx`, forwards to `global_events` (the Tauri bridge)
+- `acp_chat.rs` bridge task emits `acp:sessionUpdate` Tauri events
+- `acpStore.ts` `_handleSessionEvent` filters by `sessionId === this._sessionId`, dispatches to UI
+
+**Prompt flow (frontend → agent):**
+- `acpStore.ts` `sendMessage()` → `invoke('acp_chat_prompt', { sessionId, blocks })`
+- `acp_chat.rs` `acp_chat_prompt` → looks up session by `sessionId` → `session.prompt(blocks)`
+- `session.rs` `run_prompt()` → sends `session/prompt` JSON-RPC to agent stdin
+- Agent processes, streams `session/update` notifications back through the event flow
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `crates/sidex-acp/src/session.rs` | AcpSession struct — owns agent connection, JSON-RPC over stdin/stdout, I/O task, event broadcast |
+| `crates/sidex-acp/src/manager.rs` | AcpSessionManager — session lifecycle, connection pooling, event forwarding setup |
+| `crates/sidex-acp/src/agent.rs` | AgentManager — spawns/kills agent subprocesses, stdin/stdout pumping |
+| `src-tauri/src/commands/acp_chat.rs` | Tauri commands — bridge between frontend invoke() and Rust session layer |
+| `src/vs/workbench/contrib/acpChat/browser/acpStore.ts` | Frontend store — manages chat state, event filtering, sendMessage/loadSession |
+| `src/vs/workbench/contrib/acpChat/browser/acpChatView.ts` | Chat view — DOM rendering, connecting bar, event bindings |
+| `src/vs/workbench/contrib/acpChat/browser/components/toolbar/chatHeader.ts` | History dropdown — session list, onSelectSession handler |
+| `src/vs/workbench/contrib/acpChat/browser/media/acpChatView.css` | Chat CSS — connecting bar animation, message styles |
+| `research/crow-cli/crow-cli/src/crow_cli/agent/main.py` | crow-cli ACP agent — load_session, prompt, cancel, react_loop |
+
+### Critical Patterns and Gotchas
+
+**Session switching must spawn a fresh agent process.**
+`session/load` on an existing connection causes the crow-cli agent to immediately cancel subsequent prompts (`stopReason: "cancelled"` in 2ms). The correct flow is: kill old agent → spawn new → initialize → session/load on fresh connection. This is implemented in `manager.rs` `switch_session()`.
+
+**Event forwarding must be set up per-connection.**
+Each `AcpSession` has its own `events_tx` broadcast channel. `bind_new_session`, `bind_load_session`, and `switch_session` all spawn a forwarding task that subscribes to `events_tx` and forwards to `global_events`. Without this, events never reach the frontend.
+
+**Session ID field mapping: `sessionId` not `id`.**
+The ACP agent returns camelCase `sessionId` in responses. The frontend store must map `s.sessionId` not `s.id` when building the session list.
+
+**Frontend event filtering by sessionId.**
+`acpStore._handleSessionEvent` drops events where `sessionId !== this._sessionId`. After a session switch, if the store's `_sessionId` doesn't match the events' `sessionId`, all events are silently dropped.
+
+**The `session_id_cell` is shared with the I/O task.**
+`AcpSession.session_id_cell: Arc<Mutex<String>>` is cloned into the I/O task so it knows the current session ID for tagging events. This must be updated atomically during session operations.
+
+### Build and Dev Workflow
+
+- `npx tauri dev` — runs both Vite dev server (localhost:1420) and Rust backend with auto-rebuild
+- `cargo check -p sidex-acp` — quick check of the ACP crate
+- `cargo check` — full workspace check
+- Frontend TypeScript hot-reloads via Vite
+- Rust backend auto-rebuilds when Tauri detects changes
+- No need to restart anything after code changes in dev mode
+
+### The sidex/vscode Relationship
+
+This codebase is a fork/derivative of VSCode's web workbench. The `src/vs/` directory contains heavily modified VSCode source. Key differences:
+- Uses Vite instead of VSCode's custom build system
+- Tauri provides the native shell (file system, terminal, process management)
+- The `contrib/acpChat/` directory is entirely custom (not from VSCode)
+- Extensions run in a web worker, same as VSCode web
+- `src/vs/sidex-bridge.ts` is the integration point where sidex features (Tauri commands, Rust backends) are wired into the VSCode workbench lifecycle
+
+### Frontend Architecture Notes
+
+The frontend is NOT React/Vue — it's manual DOM manipulation using VSCode's patterns:
+- Views extend VSCode's `ViewPane` or similar base classes and build DOM in `renderBody()`
+- Components in `contrib/acpChat/browser/components/` are custom classes that create DOM elements directly (no JSX, no virtual DOM)
+- State management is in `acpStore.ts` which uses an event emitter pattern — views subscribe to store events
+- CSS lives in `contrib/acpChat/browser/media/acpChatView.css` and is loaded via VSCode's CSS loader
+- The Tauri webview is at `localhost:1420` — use the browser tools to inspect and test
+
+### Rust Crate Structure
+
+The workspace has many crates. The most important ones for day-to-day work:
+- `sidex-acp` — ACP protocol client (agent sessions, JSON-RPC, event streaming)
+- `sidex-dap` — Debug Adapter Protocol (similar pattern to ACP but for debuggers)
+- `sidex-lsp` — Language Server Protocol client
+- `sidex-terminal` — Terminal emulation and PTY management
+- `sidex-workspace` — Workspace/project management
+- `sidex-git` — Git integration
+- `sidex-db` — SQLite database layer (session storage, etc.)
+- `sidex-auth` — Authentication (OAuth flows for AI providers)
+- The Tauri binary is in `src-tauri/` — commands are split into modules under `src-tauri/src/commands/`
+- Extension host (Node.js worker for VSCode extensions) lives in `src-tauri/extension-host/`
+
+### Debugging Strategies
+
+**When frontend doesn't respond to backend events:**
+1. Check `acpStore._sessionId` matches the event's `sessionId` (open browser console, add breakpoints)
+2. Check the event bridge is running — look for `acp:sessionUpdate` events in browser's Tauri event listener
+3. Check the forwarding task is alive in `manager.rs` — if the `events_tx` subscription was dropped, events go nowhere
+
+**When agent returns unexpected results:**
+1. Search `acp.log` for the specific method/session to see the raw JSON-RPC exchange
+2. Check the crow-cli agent's `main.py` for how it handles that method
+3. Remember: the agent process is a subprocess — check if it crashed or was killed unexpectedly
+
+**When Tauri commands fail:**
+1. Check the browser console for the invoke() error
+2. Check Rust stderr (Tauri dev shows it in the terminal running `npx tauri dev`)
+3. Commands are async — make sure the frontend `.catch()` handles rejections
+
+### Common Pitfalls
+
+- Don't confuse `sidex` (the editor platform) with `Crow` (the AI product built on top). The Tauri app is named "Crow" but the codebase is "sidex".
+- The `dist/` directory contains pre-built frontend assets — don't edit files there, they get overwritten by Vite builds
+- VSCode's `nls` (national language support) wraps all user-facing strings — `localize('key', 'default')` pattern everywhere
+- `invoke()` calls from frontend to Rust are async and can fail — always handle the error case
+- The `acp.log` file grows fast (60MB+) — always use `grep`, `tail`, or `sed` with line ranges, never try to read the whole thing

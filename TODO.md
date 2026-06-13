@@ -4,9 +4,10 @@
 - Moving back to previously viewed window the focus should be on the very bottom of the chat
 - Moving back to previously viewed window the editors should all still be populated
 - Moving off of window should not prevent information streamed from the backend from being displayed. You should be able to move between windows and see response from different chats.
-- Log to `~/.local/share/crow/acp.log` and find all instances where we still log to some sidex directory to rename to crow
-- 
-
+- Log to `~/.local/share/crow/acp.log` and find all instances where we still log to some sidex directory to rename to crow — make sure this is a rotating log so we don't end up writing 18 GB of logs in a week
+- Get syntax higlighting working while agent is responding/text is streaming. Rethink current system and how it works to make it better. Use marked syntax highlighting package, NOT monaco
+- Cancellation should cancel any running terminals
+- Cancel button on running terminals that only cancels terminal command but react loop continues
 
 ### Rich Text Editor
 
@@ -23,14 +24,7 @@
 - I want to be able to save what I was typing in so drafts folder for session/prompt essentially
 - Autocomplete with something like zed uses for local model autocomplete
 
-$$ \nabla $$
 
-
-```mermaid
-graph TD
-    A --> B
-    B --> C
-```
 ### Tools
 
 - ~~Add diff fixtures for edit and write~~
@@ -68,5 +62,3 @@ graph TD
 ## CROW-CLI SPECIFIC CHANGES
 
 - Do we want to make modifying crow-cli and crow-mcp like the core use case of this bad-boy?
-
-- ~~be a fucking badass~~
