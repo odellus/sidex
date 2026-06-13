@@ -66,9 +66,18 @@ RAM savings are most tested on macOS, WKWebView is shared with Safari. On Window
 ```bash
 git clone https://github.com/Sidenai/sidex.git
 cd sidex
-npm install
+npm install --legacy-peer-deps
+npm run setup:full
 npm run tauri dev
 ```
+
+**What `setup:full` does:**
+
+The Rust backend requires VSCode's built-in extensions (syntax highlighting, themes, language support) to be present in the `extensions/` directory. `npm run setup:full` either:
+- Copies extensions from a local VSCode installation (fast), or
+- Downloads them from the VSCode GitHub repo (slower, ~100MB)
+
+This only needs to run once. Subsequent `npm run tauri dev` calls will skip the download.
 
 ### Build from Source
 

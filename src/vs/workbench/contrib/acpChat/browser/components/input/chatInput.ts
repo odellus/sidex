@@ -5,7 +5,12 @@ import { ThemeIcon } from '../../../../../../base/common/themables.js';
 import { RichTextEditor } from './richTextEditor.js';
 import type { ContentBlock } from '@agentclientprotocol/sdk';
 
-export type AgentMode = 'agent' | 'plan' | 'ask';
+interface AgentConfig {
+	name: string;
+	command: string;
+	args: string[];
+	env: string[];
+}
 
 function codicon(c: ThemeIcon): HTMLSpanElement {
 	const el = document.createElement('span');
@@ -17,10 +22,10 @@ export class ChatInput extends Component {
 	private _richEditor: RichTextEditor;
 	private _sendBtn: HTMLElement;
 	private _stopBtn: HTMLElement;
-	private _modeLabel: HTMLElement;
+	private _agentLabel: HTMLElement;
 	private _modelLabel: HTMLElement;
-	private _modeMenu: HTMLElement;
-	private _currentMode: AgentMode = 'agent';
+	private _agentMenu: HTMLElement;
+	private _currentAgent: AgentConfig | null = null;
 	private _currentModel = '';
 
 	private readonly _onSend = this._register(new Emitter<string>());
@@ -32,13 +37,11 @@ export class ChatInput extends Component {
 	private readonly _onStop = this._register(new Emitter<void>());
 	readonly onStop: Event<void> = this._onStop.event;
 
-	private readonly _onModeChange = this._register(new Emitter<AgentMode>());
-	readonly onModeChange: Event<AgentMode> = this._onModeChange.event;
+	private readonly _onAgentChange = this._register(new Emitter<string>());
+	readonly onAgentChange: Event<string> = this._onAgentChange.event;
 
 	private readonly _onModelChange = this._register(new Emitter<string>());
 	readonly onModelChange: Event<string> = this._onModelChange.event;
-
-	get mode(): AgentMode { return this._currentMode; }
 
 	constructor(workspaceRoot: string = '') {
 		super('div', 'sc-input-area');
@@ -54,39 +57,29 @@ export class ChatInput extends Component {
 		const left = DOM.append(footer, $('div.sc-input-footer-left'));
 		const right = DOM.append(footer, $('div.sc-input-footer-right'));
 
-		// Mode dropdown — icon + "Agent" + chevron
-		const modeBtn = DOM.append(left, $('button.sc-mode-dropdown'));
-		const modeIconEl = DOM.append(modeBtn, $('span.sc-mode-icon'));
-		modeIconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none"><g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><line x1="10" y1="3" x2="10" y2="4"/><line x1="6.5" y1="3.9378" x2="7" y2="4.8038"/><line x1="3.9378" y1="6.5" x2="4.8038" y2="7"/><line x1="3" y1="10" x2="4" y2="10"/><line x1="3.9378" y1="13.5" x2="4.8038" y2="13"/><line x1="6.5" y1="16.0622" x2="7" y2="15.1962"/><line x1="10" y1="17" x2="10" y2="16"/><line x1="13.5" y1="16.0622" x2="13" y2="15.1962"/><line x1="16.0622" y1="13.5" x2="15.1962" y2="13"/><line x1="17" y1="10" x2="16" y2="10"/><line x1="16.0622" y1="6.5" x2="15.1962" y2="7"/><line x1="13.5" y1="3.9378" x2="13" y2="4.8038"/></g></svg>';
-		this._modeLabel = DOM.append(modeBtn, $('span.sc-mode-label'));
-		this._modeLabel.textContent = 'Agent';
-		const modeChevEl = document.createElement('span');
-		modeChevEl.classList.add(...ThemeIcon.asClassNameArray(Codicon.chevronDown), 'codicon-sm');
-		modeBtn.appendChild(modeChevEl);
+		// Agent dropdown — icon + agent name + chevron
+		const agentBtn = DOM.append(left, $('button.sc-mode-dropdown'));
+		const agentIconEl = DOM.append(agentBtn, $('span.sc-mode-icon'));
+		agentIconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none"><g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="10" cy="10" r="3"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.93 4.93l1.41 1.41M13.66 13.66l1.41 1.41M4.93 15.07l1.41-1.41M13.66 6.34l1.41-1.41"/></g></svg>';
+		this._agentLabel = DOM.append(agentBtn, $('span.sc-mode-label'));
+		this._agentLabel.textContent = 'Agent';
+		const agentChevEl = document.createElement('span');
+		agentChevEl.classList.add(...ThemeIcon.asClassNameArray(Codicon.chevronDown), 'codicon-sm');
+		agentBtn.appendChild(agentChevEl);
 
-		// Mode dropdown menu
-		this._modeMenu = DOM.append(this.element, $('div.sc-mode-menu'));
-		for (const mode of ['agent', 'plan', 'ask'] as AgentMode[]) {
-			const item = DOM.append(this._modeMenu, $('div.sc-mode-menu-item'));
-			item.dataset.mode = mode;
-			item.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
-			if (mode === 'agent') { item.classList.add('active'); }
-			this.on(item, 'click', () => {
-				this._setMode(mode);
-				this._modeMenu.classList.remove('visible');
-			});
-		}
-		this.on(modeBtn, 'click', () => {
-			const isOpening = !this._modeMenu.classList.contains('visible');
-			this._modeMenu.classList.toggle('visible');
+		// Agent dropdown menu
+		this._agentMenu = DOM.append(this.element, $('div.sc-mode-menu'));
+		this.on(agentBtn, 'click', () => {
+			const isOpening = !this._agentMenu.classList.contains('visible');
+			this._agentMenu.classList.toggle('visible');
 			if (isOpening) {
-				modeIconEl.classList.add('spin');
-				setTimeout(() => modeIconEl.classList.remove('spin'), 400);
+				agentIconEl.classList.add('spin');
+				setTimeout(() => agentIconEl.classList.remove('spin'), 400);
 			}
 		});
 		this.on(document.body, 'click', (e) => {
-			if (!modeBtn.contains(e.target as Node) && !this._modeMenu.contains(e.target as Node)) {
-				this._modeMenu.classList.remove('visible');
+			if (!agentBtn.contains(e.target as Node) && !this._agentMenu.contains(e.target as Node)) {
+				this._agentMenu.classList.remove('visible');
 			}
 		});
 
@@ -160,12 +153,31 @@ export class ChatInput extends Component {
 		this._stopBtn.style.display = streaming ? 'flex' : 'none';
 	}
 
-	setMode(mode: AgentMode): void {
-		this._currentMode = mode;
-		this._modeLabel.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
-		this._modeMenu.querySelectorAll('.sc-mode-menu-item').forEach(item => {
-			(item as HTMLElement).classList.toggle('active', (item as HTMLElement).dataset.mode === mode);
+	/** Set the current agent. Called when agent changes. */
+	setCurrentAgent(agent: AgentConfig | null): void {
+		this._currentAgent = agent;
+		this._agentLabel.textContent = agent?.name || 'No Agent';
+		this._agentMenu.querySelectorAll('.sc-mode-menu-item').forEach(item => {
+			(item as HTMLElement).classList.toggle('active', (item as HTMLElement).dataset.agentName === agent?.name);
 		});
+	}
+
+	/** Populate the agent dropdown with available agents. */
+	setAvailableAgents(agents: AgentConfig[]): void {
+		this._agentMenu.innerHTML = '';
+		for (const agent of agents) {
+			const item = document.createElement('div');
+			item.className = 'sc-mode-menu-item';
+			item.dataset.agentName = agent.name;
+			item.textContent = agent.name;
+			if (agent.name === this._currentAgent?.name) { item.classList.add('active'); }
+			this.on(item, 'click', () => {
+				this.setCurrentAgent(agent);
+				this._onAgentChange.fire(agent.name);
+				this._agentMenu.classList.remove('visible');
+			});
+			this._agentMenu.appendChild(item);
+		}
 	}
 
 	/** Set the model name shown in the footer. Called by the view when server info arrives. */
@@ -201,11 +213,6 @@ export class ChatInput extends Component {
 			});
 			menu.appendChild(item);
 		}
-	}
-
-	private _setMode(mode: AgentMode): void {
-		this.setMode(mode);
-		this._onModeChange.fire(mode);
 	}
 
 	private _doSend(): void {

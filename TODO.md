@@ -43,6 +43,10 @@
   - An editor/view for the normal queue of a standard agent
   - An editor/view for the task/todo list that the instructor/orchestrator/worker iterate over
 
+
+- DO NOT SHOW ... WHEN COMMAND OVERRUNS! SHOW WHOLE FUCKING GOD DAMN THINGS WTF
+
+
 ## IDE specific
 
 - ~~Rebrand. Go ahead and do it. Call it crow. Use the crow logo.~~

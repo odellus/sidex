@@ -936,9 +936,9 @@
 	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font));
 	color: var(--vscode-terminal-foreground);
 	flex: 1;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	white-space: pre-wrap;
+	word-break: break-all;
+	min-width: 0;
 }
 
 .sc-inline-terminal-cwd {

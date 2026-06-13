@@ -109,7 +109,7 @@ export class AcpChatViewPane extends ViewPane {
 			this.chatService.sendMessage('', blocks);
 		}));
 		this._viewDisposables.add(this._input.onStop(() => this.chatService.stopStreaming()));
-		this._viewDisposables.add(this._input.onModeChange(mode => this.chatService.setMode(mode)));
+		this._viewDisposables.add(this._input.onAgentChange(agentName => this.chatService.switchAgent(agentName)));
 
 		this._viewDisposables.add(this._header.onNewChat(() => this.chatService.clearMessages()));
 
@@ -175,6 +175,11 @@ export class AcpChatViewPane extends ViewPane {
 			if (modelConfig) {
 				this.chatService.setConfigOption(modelConfig.id, modelId);
 			}
+		}));
+
+		this._viewDisposables.add(this.chatService.onDidChangeAgents(() => {
+			this._input.setAvailableAgents(this.chatService.availableAgents);
+			this._input.setCurrentAgent(this.chatService.currentAgent);
 		}));
 
 		this._viewDisposables.add(this.chatService.onDidReceiveControlSignal(signal => {

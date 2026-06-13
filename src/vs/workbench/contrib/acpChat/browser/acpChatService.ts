@@ -9,6 +9,15 @@ import { InstantiationType, registerSingleton } from '../../../../platform/insta
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { AcpStore, ConnectionStatus, PromptTurnState, ControlSignal, SessionConfigOption } from './acpStore.js';
 import type { AcpNotification } from './acp-utils.js';
+import { invoke } from '../../../../sidex-bridge.js';
+import type { ContentBlock } from '@agentclientprotocol/sdk';
+
+interface AgentConfig {
+	name: string;
+	command: string;
+	args: string[];
+	env: string[];
+}
 
 // ─── Service interface ─────────────────────────────────────────────────────
 
@@ -36,6 +45,10 @@ export interface IAcpChatService {
 	// Model info
 	readonly serverModel: string;
 
+	// Agent management
+	readonly availableAgents: AgentConfig[];
+	readonly currentAgent: AgentConfig | null;
+
 	// Events
 	readonly onDidChangeNotifications: Event<void>;
 	readonly onDidChangeStreaming: Event<boolean>;
@@ -43,12 +56,14 @@ export interface IAcpChatService {
 	readonly onDidChangeModels: Event<Array<{ id: string; name: string }>>;
 	readonly onDidChangeConfigOptions: Event<SessionConfigOption[]>;
 	readonly onDidReceiveControlSignal: Event<ControlSignal>;
+	readonly onDidChangeAgents: Event<void>;
 
 	// Actions
 	connect(): Promise<void>;
 	sendMessage(text: string, blocks?: ContentBlock[]): void;
 	stopStreaming(): void;
 	setMode(mode: string): void;
+	switchAgent(agentName: string): Promise<void>;
 	clearMessages(): void;
 	loadSession(sessionId: string): Promise<void>;
 	setSelectedModel(modelId: string): void;
@@ -65,9 +80,13 @@ class AcpChatServiceImpl implements IAcpChatService {
 	private _store = new AcpStore();
 	private _model: string = '';
 	private _cwd: string = '';
+	private _agents: AgentConfig[] = [];
+	private _currentAgent: AgentConfig | null = null;
 
 	get cwd(): string { return this._cwd; }
 	get sessionId(): string { return this._store.sessionId; }
+	get availableAgents(): AgentConfig[] { return this._agents; }
+	get currentAgent(): AgentConfig | null { return this._currentAgent; }
 
 	private readonly _onDidChangeNotifications = new Emitter<void>();
 	readonly onDidChangeNotifications = this._onDidChangeNotifications.event;
@@ -86,6 +105,9 @@ class AcpChatServiceImpl implements IAcpChatService {
 
 	private readonly _onDidReceiveControlSignal = new Emitter<ControlSignal>();
 	readonly onDidReceiveControlSignal = this._onDidReceiveControlSignal.event;
+
+	private readonly _onDidChangeAgents = new Emitter<void>();
+	readonly onDidChangeAgents = this._onDidChangeAgents.event;
 
 	get connectionState(): ConnectionStatus { return this._store.connectionStatus; }
 	get notifications(): readonly AcpNotification[] { return this._store.notifications; }
@@ -123,15 +145,40 @@ class AcpChatServiceImpl implements IAcpChatService {
 		const workspaceRoot = workspace.folders[0]?.uri?.fsPath;
 		const cwd = workspaceRoot || '/home';
 
+		// Read agent config from settings (defaults are in builtin_defaults())
+		let defaultAgentName = 'crow';
+		let agents: AgentConfig[] = [];
+		try {
+			const nameResult = await invoke<string | null>('settings_get', { section: 'acp.defaultAgent' });
+			if (nameResult) { defaultAgentName = nameResult; }
+			const agentsResult = await invoke<AgentConfig[] | null>('settings_get', { section: 'acp.agents' });
+			if (agentsResult) { agents = agentsResult; }
+		} catch (e) {
+			console.warn('[acpChatService] Failed to read settings, using defaults:', e);
+		}
+		const agent = agents.find(a => a.name === defaultAgentName) || agents[0];
+		if (!agent) {
+			throw new Error('No ACP agents configured in settings (acp.agents)');
+		}
+
+		// Store agent list and current agent for UI
+		this._agents = agents;
+		this._currentAgent = agent;
+		this._onDidChangeAgents.fire();
+
+		return this._spawnAgent(agent, cwd);
+	}
+
+	private async _spawnAgent(agent: AgentConfig, cwd: string): Promise<void> {
 		let lastError: unknown;
 		for (let attempt = 0; attempt < 3; attempt++) {
 			try {
 				await this._store.start();
 				await this._store.spawnAndConnect({
-					name: 'crow',
-					command: 'crow-cli',
-					args: ['acp'],
-					env: [],
+					name: agent.name,
+					command: agent.command,
+					args: agent.args,
+					env: agent.env,
 					cwd,
 				});
 				// Agent provides models via session/new response — use defaults until we wire that up
@@ -160,6 +207,27 @@ class AcpChatServiceImpl implements IAcpChatService {
 	setMode(mode: string): void {
 		// No-op for now — ACP doesn't have explicit mode control
 		// Could set a session config option if the agent supports it
+	}
+
+	async switchAgent(agentName: string): Promise<void> {
+		const agent = this._agents.find(a => a.name === agentName);
+		if (!agent) {
+			console.warn(`[acpChatService] Agent "${agentName}" not found`);
+			return;
+		}
+		if (agent.name === this._currentAgent?.name) { return; }
+
+		// Clear current session
+		this.clearMessages();
+
+		// Update current agent
+		this._currentAgent = agent;
+		this._onDidChangeAgents.fire();
+
+		// Spawn new agent
+		const workspace = this._workspaceContext.getWorkspace();
+		const cwd = workspace.folders[0]?.uri?.fsPath || '/home';
+		await this._spawnAgent(agent, cwd);
 	}
 
 	clearMessages(): void {

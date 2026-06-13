@@ -23,6 +23,7 @@ pub fn builtin_defaults() -> Value {
     add_output_defaults(&mut m);
     add_notebook_defaults(&mut m);
     add_language_specific_defaults(&mut m);
+    add_acp_defaults(&mut m);
     Value::Object(m)
 }
 
@@ -738,6 +739,22 @@ fn add_language_specific_defaults(m: &mut Map<String, Value>) {
     );
 }
 
+fn add_acp_defaults(m: &mut Map<String, Value>) {
+    ins(
+        m,
+        "acp.agents",
+        json!([
+            {
+                "name": "crow",
+                "command": "crow-cli",
+                "args": ["acp"],
+                "env": []
+            }
+        ]),
+    );
+    ins(m, "acp.defaultAgent", json!("crow"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -822,6 +839,16 @@ mod tests {
     fn has_scm_defaults() {
         let d = builtin_defaults();
         assert_eq!(d["scm.alwaysShowActions"], false);
+    }
+
+    #[test]
+    fn has_acp_defaults() {
+        let d = builtin_defaults();
+        let agents = d["acp.agents"].as_array().unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0]["name"], "crow");
+        assert_eq!(agents[0]["command"], "crow-cli");
+        assert_eq!(d["acp.defaultAgent"], "crow");
     }
 
     #[test]

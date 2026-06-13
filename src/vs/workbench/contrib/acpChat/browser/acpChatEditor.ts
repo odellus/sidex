@@ -35,7 +35,15 @@ import { ToolCallGroup } from './components/tools/toolCallGroup.js';
 import { acpChatEditorId } from './acpChatEditorInput.js';
 import { AcpChatEditorInput } from './acpChatEditorInput.js';
 import type { AcpNotification } from './acp-utils.js';
+import { invoke } from '../../../../sidex-bridge.js';
 import './media/acpChatView.css';
+
+interface AgentConfig {
+	name: string;
+	command: string;
+	args: string[];
+	env: string[];
+}
 
 const $ = dom.$;
 
@@ -63,6 +71,10 @@ export class AcpChatEditor extends EditorPane {
 	private _editorInput?: AcpChatEditorInput;
 	private _acpStore?: AcpStore;
 	private _currentSessionId?: string;
+
+	// Agent management — loaded from settings, independent of chatService
+	private _agents: AgentConfig[] = [];
+	private _currentAgent: AgentConfig | null = null;
 
 	// Disposables for the UI components that live for the pane lifetime.
 	private readonly _uiDisposables = this._register(new DisposableStore());
@@ -227,11 +239,6 @@ export class AcpChatEditor extends EditorPane {
 			})
 		);
 		this._sessionDisposables.add(this._chatInput.onStop(() => store.stopStreaming()));
-		this._sessionDisposables.add(
-			this._chatInput.onModeChange(_mode => {
-				/* no-op */
-			})
-		);
 
 		this._sessionDisposables.add(this._header.onNewChat(() => store.clearMessages()));
 		this._sessionDisposables.add(
@@ -300,6 +307,9 @@ export class AcpChatEditor extends EditorPane {
 				}
 			})
 		);
+		this._sessionDisposables.add(this._chatInput.onAgentChange(agentName => {
+			this._switchAgent(agentName);
+		}));
 		this._sessionDisposables.add(
 			store.onDidReceiveControlSignal(signal => {
 				if (signal.type === 'brief' && signal.content) {
@@ -310,11 +320,82 @@ export class AcpChatEditor extends EditorPane {
 		);
 	}
 
+	private async _switchAgent(agentName: string): Promise<void> {
+		const store = this._acpStore;
+		if (!store) {
+			return;
+		}
+
+		// Find the agent in the available agents list
+		const agent = this._agents.find(a => a.name === agentName);
+		if (!agent) {
+			console.warn(`[AcpChatEditor] Agent "${agentName}" not found`);
+			return;
+		}
+
+		// Check if it's already the current agent
+		if (agent.name === this._currentAgent?.name) {
+			return;
+		}
+
+		const workspace = this._workspaceContext.getWorkspace();
+		const cwd = workspace.folders[0]?.uri?.fsPath || '/home';
+
+		// Close the current session before spawning a new agent
+		try {
+			await store.closeSession();
+		} catch (e) {
+			console.warn('[AcpChatEditor] closeSession failed during switch:', e);
+		}
+
+		// Clear messages
+		store.clearMessages();
+
+		// Update current agent
+		this._currentAgent = agent;
+		this._chatInput.setCurrentAgent(agent);
+
+		// Spawn the new agent with its actual configuration
+		for (let attempt = 0; attempt < 3; attempt++) {
+			try {
+				await store.start();
+				await store.spawnAndConnect({
+					name: agent.name,
+					command: agent.command,
+					args: agent.args,
+					env: agent.env,
+					cwd
+				});
+				return;
+			} catch (e) {
+				if (attempt < 2) {
+					console.warn(`[AcpChatEditor] switchAgent attempt ${attempt + 1} failed, retrying...`);
+					await new Promise(r => setTimeout(r, 2000));
+				} else {
+					console.error('[AcpChatEditor] switchAgent failed:', e);
+				}
+			}
+		}
+	}
+
 	private async _connect(): Promise<void> {
 		const store = this._acpStore;
 		if (!store) {
 			return;
 		}
+
+		// Load agent configuration from settings
+		await this._loadAgentConfig();
+
+		const agent = this._currentAgent;
+		if (!agent) {
+			console.error('[AcpChatEditor] No agent configured');
+			return;
+		}
+
+		// Update the UI with available agents
+		this._chatInput.setAvailableAgents(this._agents);
+		this._chatInput.setCurrentAgent(agent);
 
 		const workspace = this._workspaceContext.getWorkspace();
 		const cwd = workspace.folders[0]?.uri?.fsPath || '/home';
@@ -323,10 +404,10 @@ export class AcpChatEditor extends EditorPane {
 			try {
 				await store.start();
 				await store.spawnAndConnect({
-					name: 'crow',
-					command: 'crow-cli',
-					args: ['acp'],
-					env: [],
+					name: agent.name,
+					command: agent.command,
+					args: agent.args,
+					env: agent.env,
 					cwd
 				});
 				return;
@@ -339,6 +420,24 @@ export class AcpChatEditor extends EditorPane {
 				}
 			}
 		}
+	}
+
+	private async _loadAgentConfig(): Promise<void> {
+		let defaultAgentName = 'crow';
+		let agents: AgentConfig[] = [];
+
+		try {
+			const nameResult = await invoke<string | null>('settings_get', { section: 'acp.defaultAgent' });
+			if (nameResult) { defaultAgentName = nameResult; }
+
+			const agentsResult = await invoke<AgentConfig[] | null>('settings_get', { section: 'acp.agents' });
+			if (agentsResult) { agents = agentsResult; }
+		} catch (e) {
+			console.warn('[AcpChatEditor] Failed to read settings, using defaults:', e);
+		}
+
+		this._agents = agents;
+		this._currentAgent = agents.find(a => a.name === defaultAgentName) || agents[0] || null;
 	}
 
 	// ── Rendering ──
