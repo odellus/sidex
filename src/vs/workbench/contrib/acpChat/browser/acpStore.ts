@@ -487,6 +487,36 @@ export class AcpStore {
 			return;
 		}
 
+		// Orchestration: _send notification (response from another agent)
+		if (sessionUpdate === '_send') {
+			const fromSessionId = update.fromSessionId as string;
+			const summary = update.summary as string;
+			const status = update.status as string;
+
+			// Format as a user message showing the response from the other agent
+			const displayText = `📨 **Response from ${fromSessionId}:**\n\n${summary}`;
+			
+			// Add as a user message notification
+			const userNotification: AcpNotification = {
+				id: `send-response-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+				type: 'session_notification',
+				data: {
+					update: {
+						sessionUpdate: 'user_message_chunk',
+						content: { text: displayText },
+					},
+				},
+			};
+			this._notifications = [...this._notifications, userNotification];
+			this._onDidChangeNotifications.fire();
+
+			// Automatically send a new prompt with the notification so the agent can process it
+			if (status === 'completed') {
+				this.sendMessage('', [{ type: 'text', text: displayText }]);
+			}
+			return;
+		}
+
 		// ── Content events (appended to notification log) ──
 
 		const notificationId = `evt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

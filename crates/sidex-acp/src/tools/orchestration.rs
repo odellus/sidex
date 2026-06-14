@@ -98,7 +98,7 @@ pub async fn send_to_session(params: &Value, ctx: &ToolContext) -> Result<Value,
             }
         }
 
-        // Step 4: Send _send notification to caller
+        // Step 4: Send _send notification to caller agent
         if let Some(caller_session) = manager.get_session(&from_session_id_clone).await {
             *caller_session.delegation_state.lock().await = DelegationState::Responding;
 
@@ -110,6 +110,8 @@ pub async fn send_to_session(params: &Value, ctx: &ToolContext) -> Result<Value,
                 "status": "completed"
             });
 
+            // Send _send notification to the client (UI) via the event stream
+            // The client will then inject it as a new user prompt to the caller agent
             let _ = caller_session.events_tx.send(SessionEvent::Update {
                 session_id: from_session_id_clone.clone(),
                 update,
@@ -149,6 +151,12 @@ async fn send_error_callback(
             "status": "error"
         });
 
+        // Send _send error notification directly to the caller agent via extension method
+        if let Err(e) = caller_session.send_ext_notification("_send", update.clone()).await {
+            acp_log!("ERROR", "Failed to send _send error notification to agent: {}", e);
+        }
+
+        // Also broadcast to UI/frontend
         let _ = caller_session.events_tx.send(SessionEvent::Update {
             session_id: from_session_id.to_string(),
             update,
@@ -331,12 +339,44 @@ pub async fn task_send(params: &Value, ctx: &ToolContext) -> Result<Value, Strin
     .map_err(|e| e.to_string())
 }
 
-/// Broadcast task list update to all clients viewing this session.
+/// Broadcast task list as a proper ACP Plan update to all clients viewing this session.
 async fn broadcast_task_list(session: &Arc<crate::session::AcpSession>) {
     let tasks = session.task_list.lock().await.clone();
+    
+    // Convert tasks to ACP PlanEntry format
+    let entries: Vec<Value> = tasks.iter().map(|t| {
+        let status = match t.status {
+            TaskStatus::Pending => "pending",
+            TaskStatus::InProgress => "in_progress",
+            TaskStatus::Completed => "completed",
+            TaskStatus::Failed => "completed", // ACP doesn't have "failed", map to completed
+        };
+        let priority = "medium";
+        
+        let mut entry = json!({
+            "content": t.title,
+            "priority": priority,
+            "status": status,
+        });
+        
+        // Add _meta with task details for client-side routing
+        let mut meta = json!({
+            "taskId": t.id,
+        });
+        if let Some(ref desc) = t.description {
+            meta["description"] = json!(desc);
+        }
+        if let Some(ref assigned) = t.assigned_to {
+            meta["assignedTo"] = json!(assigned);
+        }
+        entry["_meta"] = meta;
+        
+        entry
+    }).collect();
+    
     let update = json!({
         "sessionUpdate": "plan",
-        "tasks": tasks,
+        "entries": entries,
     });
     let _ = session.events_tx.send(SessionEvent::Update {
         session_id: session.session_id(),

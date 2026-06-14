@@ -217,7 +217,14 @@ class AcpChatServiceImpl implements IAcpChatService {
 		}
 		if (agent.name === this._currentAgent?.name) { return; }
 
-		// Clear current session
+		// Close the current session before spawning a new agent
+		try {
+			await this._store.closeSession();
+		} catch (e) {
+			console.warn('[acpChatService] closeSession failed during switch:', e);
+		}
+
+		// Clear messages
 		this.clearMessages();
 
 		// Update current agent

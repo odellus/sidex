@@ -49,10 +49,6 @@ pub async fn route_tool_request(
         
         // Orchestration (extension tools, underscore prefix per ACP spec)
         "_send" => orchestration::send_to_session(params, ctx).await,
-        "_queue/add" => orchestration::queue_add(params, ctx).await,
-        "_queue/list" => orchestration::queue_list(params, ctx).await,
-        "_queue/clear" => orchestration::queue_clear(params, ctx).await,
-        "_queue/remove" => orchestration::queue_remove(params, ctx).await,
         "_task/read" => orchestration::task_read(params, ctx).await,
         "_task/write" => orchestration::task_write(params, ctx).await,
         "_task/send" => orchestration::task_send(params, ctx).await,

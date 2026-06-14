@@ -596,6 +596,13 @@ impl AcpSession {
         });
     }
 
+    /// Send a custom extension notification to the agent process.
+    /// Used for orchestration callbacks (e.g., _send notifications).
+    /// Extension methods start with _ and can contain any payload.
+    pub async fn send_ext_notification(&self, method: &str, params: serde_json::Value) -> Result<()> {
+        self.notify(method, params).await
+    }
+
     /// Send a JSON-RPC notification (no response expected).
     async fn notify<T: Serialize>(&self, method: &str, params: T) -> Result<()> {
         let envelope = JsonRpcMessage::wrap(Notification {
