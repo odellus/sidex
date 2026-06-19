@@ -494,17 +494,17 @@ export class AcpChatEditor extends EditorPane {
 				comp = new UserMessage();
 				break;
 			case 'agent_thought_chunk':
-				comp = new ThinkingBlock(this._instantiationService);
+				comp = new ThinkingBlock();
 				break;
 			case 'agent_message_chunk':
-				comp = new AgentMessageGroup(this._instantiationService);
+				comp = new AgentMessageGroup();
 				break;
 		case 'tool_call':
 		case 'tool_call_update':
 			comp = new ToolCallGroup(this._instantiationService, this._workspaceContext.getWorkspace().folders[0]?.uri?.fsPath || '');
 			break;
 			default:
-				comp = new AgentMessageGroup(this._instantiationService);
+				comp = new AgentMessageGroup();
 				break;
 		}
 

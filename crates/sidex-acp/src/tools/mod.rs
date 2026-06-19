@@ -3,7 +3,7 @@
 pub mod filesystem;
 pub mod terminal;
 pub mod permissions;
-pub mod orchestration;
+pub mod orchestration_2;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -47,11 +47,11 @@ pub async fn route_tool_request(
         // Permissions
         "session/requestPermission" | "session/request_permission" => permissions::request_permission(params, ctx).await,
         
-        // Orchestration (extension tools, underscore prefix per ACP spec)
-        "_send" => orchestration::send_to_session(params, ctx).await,
-        "_task/read" => orchestration::task_read(params, ctx).await,
-        "_task/write" => orchestration::task_write(params, ctx).await,
-        "_task/send" => orchestration::task_send(params, ctx).await,
+        // Orchestration v2 (extension tools, underscore prefix per ACP spec)
+        "_send" => orchestration_2::send_to_session(params, ctx).await,
+        "_task/read" => orchestration_2::task_read(params, ctx).await,
+        "_task/write" => orchestration_2::task_write(params, ctx).await,
+        "_task/send" => orchestration_2::task_send(params, ctx).await,
         
         _ => {
             acp_log!("WARN", "Unhandled agent request: {}", method);

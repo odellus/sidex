@@ -1462,8 +1462,8 @@
 	position: relative;
 }
 
-/* Fallback <pre> shown during streaming, hidden when Monaco loads */
-.sc-code-block .sc-code-raw {
+/* highlight.js code (inline syntax highlighting via marked-highlight) */
+.sc-code-block .sc-code-pre {
 	padding: 10px 12px;
 	margin: 0;
 	background: transparent;
@@ -1478,9 +1478,10 @@
 	color: var(--vscode-foreground);
 }
 
-/* Monaco editor host — hidden by default, shown after renderCodeBlocks */
-.sc-code-block .sc-code-editor-host {
-	display: none;
+/* Let highlight.js provide token colors, but inherit the block background */
+.sc-code-block .sc-code-pre code.hljs {
+	background: transparent;
+	padding: 0;
 }
 
 .sc-code-lang {

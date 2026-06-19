@@ -250,15 +250,12 @@ export class FileEditView extends Component {
 		const container = this.append('div', 'sc-file-view-container');
 		const maxHeight = options.maxHeight ?? 400;
 
-		// Compute unified diff
+		// Compute unified diff. Use clean (un-prefixed) lines for the model so
+		// syntax highlighting works; the +/- type is conveyed by decorations.
 		const diffLines = simpleLineDiff(options.beforeContent, options.afterContent);
-		const diffText = diffLines.map(dl => {
-			if (dl.type === 'removed') return '-' + dl.line;
-			if (dl.type === 'added') return '+' + dl.line;
-			return ' ' + dl.line;
-		}).join('\n');
+		const diffText = diffLines.map(dl => dl.line).join('\n');
 
-		const model = createModel(diffText, options.path + '-diff', options.instantiationService);
+		const model = createModel(diffText, options.path, options.instantiationService);
 
 		const editor = options.instantiationService.createInstance(CodeEditorWidget, container, {
 			...commonEditorOptions,

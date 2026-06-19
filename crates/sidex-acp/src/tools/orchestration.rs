@@ -68,7 +68,7 @@ pub async fn send_to_session(params: &Value, ctx: &ToolContext) -> Result<Value,
         }
 
         // Step 2: Re-prompt for summary (no tools)
-        let summary_blocks = vec![text_block("Summarize what you just accomplished in 2-3 sentences. Focus on the outcome. Do not call any tools.")];
+        let summary_blocks = vec![text_block("Summarize what you just accomplished in a lengthy RESTful markdown in the chat describing what you did and. Do not call any tools.")];
 
         // Subscribe to events before prompting so we don't miss chunks
         let mut event_rx = target_session.subscribe();

@@ -37,6 +37,13 @@ async fn capture_shell_env(cache: &mut ShellEnvCache) {
     }
     cache.captured = true;
 
+    // Tests/CI can bypass shell-env capture entirely: it spawns a login shell
+    // which is slow and unnecessary when the agent command is an absolute path.
+    if std::env::var("SIDEX_ACP_SKIP_SHELL_ENV").is_ok() {
+        info!("capture_shell_env: skipped (SIDEX_ACP_SKIP_SHELL_ENV set)");
+        return;
+    }
+
     #[cfg(target_os = "windows")]
     {
         // Windows: inherit parent env as-is for now
@@ -49,44 +56,53 @@ async fn capture_shell_env(cache: &mut ShellEnvCache) {
         .and_then(|n| n.to_str())
         .unwrap_or("bash");
 
-    // Build strategies: -ilc (interactive login) first, then -lc (login only)
-    let strategies: Vec<String> = match shell_name {
+    // Strategies as (flag, command-string) pairs. We deliberately AVOID the
+    // interactive `-i` flag: interactive shells run .bashrc interactive-only
+    // blocks that can block indefinitely in headless contexts (waiting on a
+    // `read`, a TTY, etc.). To still pick up PATH setup that lives in
+    // ~/.bashrc (fnm/nvm/uv init), we explicitly source it from a
+    // non-interactive login shell.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let bashrc = format!("{}/.bashrc", home);
+    let strategies: Vec<(&str, String)> = match shell_name {
         "bash" | "sh" => vec![
-            format!("{} -ilc 'env -0'", shell),
-            format!("{} -lc 'env -0'", shell),
+            ("-lc", format!("source {} 2>/dev/null; env -0", bashrc)),
+            ("-lc", "env -0".to_string()),
+            ("-c", "env -0".to_string()),
         ],
         "zsh" => vec![
-            format!("{} -ilc 'env -0'", shell),
-            format!("{} -lc 'env -0'", shell),
+            ("-lc", "env -0".to_string()),
+            ("-c", "env -0".to_string()),
         ],
         _ => vec![
-            format!("{} -lc 'env -0'", shell),
-            format!("{} -c 'env -0'", shell),
+            ("-lc", "env -0".to_string()),
+            ("-c", "env -0".to_string()),
         ],
     };
 
-    for cmd_str in &strategies {
-        let parts: Vec<&str> = cmd_str.splitn(3, ' ').collect();
-        if parts.len() < 3 {
-            continue;
-        }
-        let shell_bin = parts[0];
-        let flag = parts[1];
-        let env_arg = parts[2].trim_matches('\'');
-
-        let output = match tokio::process::Command::new(shell_bin)
-            .arg(flag)
-            .arg(env_arg)
-            .output()
-            .await
+    for (flag, cmd) in &strategies {
+        let output = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            tokio::process::Command::new(&shell)
+                .arg(flag)
+                .arg(cmd)
+                .stdin(Stdio::null())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
         {
-            Ok(o) if o.status.success() => o,
-            Ok(o) => {
-                warn!("capture_shell_env: {} exited with code {:?}", cmd_str, o.status.code());
+            Ok(Ok(o)) if o.status.success() => o,
+            Ok(Ok(o)) => {
+                warn!("capture_shell_env: {} {} exited with code {:?}", shell, flag, o.status.code());
                 continue;
             }
-            Err(e) => {
-                warn!("capture_shell_env: failed to run {}: {}", cmd_str, e);
+            Ok(Err(e)) => {
+                warn!("capture_shell_env: failed to run {} {}: {}", shell, flag, e);
+                continue;
+            }
+            Err(_) => {
+                warn!("capture_shell_env: {} {} timed out after 5s", shell, flag);
                 continue;
             }
         };
@@ -104,7 +120,7 @@ async fn capture_shell_env(cache: &mut ShellEnvCache) {
             }
         }
 
-        info!("capture_shell_env: captured {} vars via {}", count, cmd_str);
+        info!("capture_shell_env: captured {} vars via {} {}", count, shell, flag);
 
         if let Some(path) = cache.env.get("PATH") {
             info!("capture_shell_env: captured PATH = {}", path);

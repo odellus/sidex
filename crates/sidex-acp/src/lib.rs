@@ -4,9 +4,24 @@
 //! to Tauri events for the frontend. This is the backend client — it owns
 //! all session state, queues, and agent processes. The frontend is a passive
 //! viewer that receives `acp:sessionUpdate` events.
+//!
+//! ## Toggle between prompt implementations
+//!
+//! To switch between the v1 (basic) and v2 (orchestration) prompt modules,
+//! change the `use` statement below.
 
-mod agent;
+pub mod agent;
 pub mod manager;
+
+// ── Toggle prompt implementation ──────────────────────────────────────────
+// Use one of the following (comment out the other):
+// pub mod prompt;    // v1 — basic prompt + queue, no orchestration
+pub mod prompt_2; // v2 — with task orchestration (Ralph loop)
+
+// Re-export the active implementation as `prompt_impl`
+pub mod prompt_impl;
+
+pub mod orchestration_state;
 pub mod session;
 pub mod tools;
 

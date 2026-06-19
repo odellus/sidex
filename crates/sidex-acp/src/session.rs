@@ -10,22 +10,22 @@ use std::collections::HashMap;
 use std::fs::{OpenOptions, create_dir_all};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 
 use anyhow::{Context, Result};
 use chrono::Local;
 use serde::Serialize;
 use serde_json::Value;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex, Notify};
 
 use agent_client_protocol_schema as acp;
 use acp::{
-    AgentNotification, CancelNotification, ClientCapabilities,
-    ContentBlock, FileSystemCapabilities, Implementation,
+    AgentNotification, ClientCapabilities,
+    FileSystemCapabilities, Implementation,
     InitializeRequest, JsonRpcMessage, ListSessionsRequest,
     LoadSessionRequest, NewSessionRequest, Notification,
-    PromptRequest, ProtocolVersion,
+    ProtocolVersion,
     Request, RequestId, Response,
     SessionConfigOption, SessionId, SessionModeState,
 };
@@ -172,6 +172,16 @@ pub enum TaskStatus {
     Failed,
 }
 
+/// A single item in the session's prompt queue.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueItem {
+    /// A plain prompt (content blocks).
+    Prompt(Vec<Value>),
+    /// A task entry that carries status and orchestration semantics.
+    Task(Task),
+}
+
 // ─── AcpSession ─────────────────────────────────────────────────────────────
 
 /// A running ACP session owned by the backend.
@@ -196,7 +206,7 @@ pub struct AcpSession {
     _io_task: tokio::task::JoinHandle<()>,
 
     /// Current prompt turn state — backend is source of truth.
-    pub prompt_turn_state: Arc<Mutex<PromptTurnState>>,
+    pub(crate) prompt_turn_state: Arc<Mutex<PromptTurnState>>,
     /// Active terminals created by this session during current prompt turn.
     pub active_terminals: Arc<Mutex<HashMap<String, SessionTerminal>>>,
     /// Shared cell so the I/O task knows the current session ID.
@@ -204,14 +214,17 @@ pub struct AcpSession {
     /// Broadcast channel for terminal events (data, exit) — manager subscribes to forward to frontend.
     terminal_events_tx: broadcast::Sender<TerminalEvent>,
     
-    /// Orchestration: delegation state machine
-    pub delegation_state: Arc<Mutex<DelegationState>>,
-    /// Orchestration: task list
-    pub task_list: Arc<Mutex<Vec<Task>>>,
-    /// Orchestration: task queue (pending tasks to process)
-    pub task_queue: Arc<Mutex<std::collections::VecDeque<Task>>>,
-    /// Orchestration: queued prompts
-    queue: Arc<Mutex<Vec<Vec<Value>>>>,
+    /// Orchestration: unified state machine (task list, delegation, summary).
+    /// Single mutex — eliminates lock-ordering risk and sync drift.
+    pub orchestration: Arc<Mutex<crate::orchestration_state::OrchestrationState>>,
+    /// Orchestration: wake signal for the task loop when a _send callback arrives.
+    pub(crate) delegation_notify: Arc<Notify>,
+    /// Orchestration: guard so at most one `run_task_loop` runs per session.
+    /// Prevents double-prompting if `task_send` and a user prompt race, or an
+    /// instructor re-sends tasks while the orchestrator loop is already active.
+    pub task_loop_running: Arc<AtomicBool>,
+    /// Queued prompts or task entries (separate from orchestration state).
+    pub(crate) queue: Arc<Mutex<Vec<QueueItem>>>,
     /// Orchestration: manager reference (set after session is added to manager)
     manager_cell: Arc<Mutex<Option<Arc<crate::manager::AcpSessionManager>>>>,
 }
@@ -331,10 +344,10 @@ impl AcpSession {
             active_terminals,
             session_id_cell,
             terminal_events_tx,
-            delegation_state: Arc::new(Mutex::new(DelegationState::NotCalled)),
-            task_list: Arc::new(Mutex::new(Vec::new())),
-            task_queue: Arc::new(Mutex::new(std::collections::VecDeque::new())),
-            queue: Arc::new(Mutex::new(Vec::new())),
+            orchestration: Arc::new(Mutex::new(crate::orchestration_state::OrchestrationState::default())),
+            delegation_notify: Arc::new(Notify::new()),
+            task_loop_running: Arc::new(AtomicBool::new(false)),
+            queue: Arc::new(Mutex::new(Vec::<QueueItem>::new())),
             manager_cell,
         };
 
@@ -352,6 +365,11 @@ impl AcpSession {
     /// Get the current session ID.
     pub fn session_id(&self) -> String {
         self.session_id.lock().clone()
+    }
+
+    /// Get the current prompt turn state (for tests/inspection).
+    pub async fn prompt_state(&self) -> PromptTurnState {
+        self.prompt_turn_state.lock().await.clone()
     }
 
     /// Get config options.
@@ -539,7 +557,7 @@ impl AcpSession {
 
     /// Send a JSON-RPC request and wait indefinitely (no timeout).
     /// Used for session/prompt which can take minutes.
-    async fn request_no_timeout<T: Serialize>(&self, method: &str, params: T) -> Result<Value> {
+    pub(crate) async fn request_no_timeout<T: Serialize>(&self, method: &str, params: T) -> Result<Value> {
         let id = self.next_id();
         let envelope = JsonRpcMessage::wrap(Request {
             id: RequestId::Number(id as i64),
@@ -581,7 +599,7 @@ impl AcpSession {
 
     /// Broadcast a synthetic session/update so the frontend receives prompt lifecycle events
     /// on the same channel as regular agent updates.
-    fn broadcast_prompt_state(&self, state: PromptTurnState) {
+    pub(crate) fn broadcast_prompt_state(&self, state: PromptTurnState) {
         let sid = self.session_id();
         let session_update = match &state {
             PromptTurnState::Idle => serde_json::json!({ "sessionUpdate": "prompt_state", "status": "idle" }),
@@ -596,6 +614,46 @@ impl AcpSession {
         });
     }
 
+    /// Broadcast the current task list as an ACP "plan" session/update.
+    pub(crate) async fn broadcast_task_list(&self) {
+        let tasks = self.orchestration.lock().await.task_list.clone();
+
+        let entries: Vec<serde_json::Value> = tasks
+            .iter()
+            .map(|t| {
+                let status = match t.status {
+                    TaskStatus::Pending => "pending",
+                    TaskStatus::InProgress => "in_progress",
+                    TaskStatus::Completed => "completed",
+                    TaskStatus::Failed => "failed", // custom _meta status for frontend
+                };
+                let mut entry = serde_json::json!({
+                    "content": t.title,
+                    "priority": "medium",
+                    "status": status,
+                });
+                let mut meta = serde_json::json!({ "taskId": t.id });
+                if let Some(ref desc) = t.description {
+                    meta["description"] = serde_json::json!(desc);
+                }
+                if let Some(ref assigned) = t.assigned_to {
+                    meta["assignedTo"] = serde_json::json!(assigned);
+                }
+                entry["_meta"] = meta;
+                entry
+            })
+            .collect();
+
+        let update = serde_json::json!({
+            "sessionUpdate": "plan",
+            "entries": entries,
+        });
+        let _ = self.events_tx.send(SessionEvent::Update {
+            session_id: self.session_id(),
+            update,
+        });
+    }
+
     /// Send a custom extension notification to the agent process.
     /// Used for orchestration callbacks (e.g., _send notifications).
     /// Extension methods start with _ and can contain any payload.
@@ -604,7 +662,7 @@ impl AcpSession {
     }
 
     /// Send a JSON-RPC notification (no response expected).
-    async fn notify<T: Serialize>(&self, method: &str, params: T) -> Result<()> {
+    pub(crate) async fn notify<T: Serialize>(&self, method: &str, params: T) -> Result<()> {
         let envelope = JsonRpcMessage::wrap(Notification {
             method: method.into(),
             params: Some(params),
@@ -626,32 +684,7 @@ impl AcpSession {
 
     /// Cancel the current prompt turn.
     pub async fn cancel(&self) -> Result<()> {
-        {
-            let mut state = self.prompt_turn_state.lock().await;
-            *state = PromptTurnState::Cancelled;
-        }
-        self.broadcast_prompt_state(PromptTurnState::Cancelled);
-
-        // Kill all active terminals for this session
-        let terminals_to_kill: Vec<SessionTerminal> = {
-            let mut active = self.active_terminals.lock().await;
-            let terms: Vec<SessionTerminal> = active.drain().map(|(_, v)| v).collect();
-            terms
-        };
-        for term in terminals_to_kill {
-            acp_log!(
-                "INFO",
-                "Killing terminal {:?} for cancelled session {}",
-                term.handle,
-                self.session_id()
-            );
-            let _ = tokio::task::spawn_blocking(move || {
-                let _ = term.pty.kill_tree();
-            }).await;
-        }
-
-        let notif = CancelNotification::new(SessionId::from(self.session_id()));
-        self.notify("session/cancel", notif).await
+        self.cancel_prompt().await
     }
 
     /// Set a session config option (e.g. model).
@@ -677,79 +710,8 @@ impl AcpSession {
 
     /// Send a prompt. Returns Ok when complete, Err on failure.
     /// Broadcasts prompt_state → running when dispatching and prompt_complete when done.
-    pub async fn prompt(&self, blocks: Vec<Value>) -> Result<()> {
-        self.run_prompt(blocks).await.map(|_| ())
-    }
-
-    /// Core prompt runner — sets state, sends to agent, broadcasts result.
-    async fn run_prompt(&self, blocks: Vec<Value>) -> Result<Value> {
-        // Clear any stale active terminals from previous turns
-        {
-            let mut active = self.active_terminals.lock().await;
-            active.clear();
-        }
-
-        // Deserialize frontend blocks into typed ContentBlocks
-        let content_blocks: Vec<ContentBlock> = blocks
-            .into_iter()
-            .filter_map(|v| match serde_json::from_value(v) {
-                Ok(b) => Some(b),
-                Err(e) => {
-                    acp_log!("WARN", "Failed to deserialize ContentBlock: {}", e);
-                    None
-                }
-            })
-            .collect();
-
-        {
-            let mut state = self.prompt_turn_state.lock().await;
-            *state = PromptTurnState::Running;
-        }
-        self.broadcast_prompt_state(PromptTurnState::Running);
-
-        let req = PromptRequest::new(SessionId::from(self.session_id()), content_blocks);
-
-        acp_log!(
-            "SEND",
-            "connection={} method=session/prompt session_id={} blocks_count={}",
-            self.connection_id,
-            self.session_id(),
-            req.prompt.len()
-        );
-
-        let result = self.request_no_timeout("session/prompt", req).await;
-
-        // NOTE: active_terminals are NOT cleared here. They persist until
-        // the agent calls terminal/release or the session is cancelled.
-        // The frontend needs to access them after the prompt turn ends.
-
-        match &result {
-            Ok(resp) => {
-                let stop_reason = resp
-                    .get("stopReason")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                let state = PromptTurnState::Complete { stop_reason };
-                {
-                    let mut s = self.prompt_turn_state.lock().await;
-                    *s = state.clone();
-                }
-                self.broadcast_prompt_state(state);
-            }
-            Err(e) => {
-                let state = PromptTurnState::Error {
-                    message: e.to_string(),
-                };
-                {
-                    let mut s = self.prompt_turn_state.lock().await;
-                    *s = state.clone();
-                }
-                self.broadcast_prompt_state(state);
-            }
-        }
-
-        result
+    pub async fn prompt(self: &Arc<Self>, blocks: Vec<Value>) -> Result<()> {
+        crate::prompt_impl::prompt(self, blocks).await
     }
 
     /// Subscribe to session events (updates, disconnects).
@@ -775,35 +737,28 @@ impl AcpSession {
     // ─── Queue methods ──────────────────────────────────────────────────────
 
     /// Add a prompt to the queue.
-    pub async fn queue_add(&self, blocks: Vec<Value>) -> Result<()> {
-        self.queue.lock().await.push(blocks);
-        Ok(())
+    pub async fn queue_add(self: &Arc<Self>, blocks: Vec<Value>) -> Result<()> {
+        crate::prompt_impl::queue_add(self, blocks).await
     }
 
     /// Get the current queue length.
-    pub async fn queue_len(&self) -> usize {
-        self.queue.lock().await.len()
+    pub async fn queue_len(self: &Arc<Self>) -> usize {
+        crate::prompt_impl::queue_len(self).await
     }
 
     /// List queued items.
-    pub async fn queue_list(&self) -> Vec<Vec<Value>> {
-        self.queue.lock().await.clone()
+    pub async fn queue_list(self: &Arc<Self>) -> Vec<QueueItem> {
+        crate::prompt_impl::queue_list(self).await
     }
 
     /// Clear the queue.
-    pub async fn queue_clear(&self) {
-        self.queue.lock().await.clear();
+    pub async fn queue_clear(self: &Arc<Self>) {
+        crate::prompt_impl::queue_clear(self).await
     }
 
     /// Remove an item from the queue by index.
-    pub async fn queue_remove(&self, index: usize) -> Option<()> {
-        let mut queue = self.queue.lock().await;
-        if index < queue.len() {
-            queue.remove(index);
-            Some(())
-        } else {
-            None
-        }
+    pub async fn queue_remove(self: &Arc<Self>, index: usize) -> Option<()> {
+        crate::prompt_impl::queue_remove(self, index).await
     }
 }
 
