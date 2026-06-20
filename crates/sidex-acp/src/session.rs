@@ -225,6 +225,10 @@ pub struct AcpSession {
     pub task_loop_running: Arc<AtomicBool>,
     /// Queued prompts or task entries (separate from orchestration state).
     pub(crate) queue: Arc<Mutex<Vec<QueueItem>>>,
+    /// Serialization guard for `prompt()`: true while a prompt turn (including
+    /// queue draining) is in progress. Concurrent `prompt()` calls see this and
+    /// queue themselves instead of sending a second `session/prompt` request.
+    pub(crate) prompt_busy: Arc<Mutex<bool>>,
     /// Orchestration: manager reference (set after session is added to manager)
     manager_cell: Arc<Mutex<Option<Arc<crate::manager::AcpSessionManager>>>>,
 }
@@ -348,6 +352,7 @@ impl AcpSession {
             delegation_notify: Arc::new(Notify::new()),
             task_loop_running: Arc::new(AtomicBool::new(false)),
             queue: Arc::new(Mutex::new(Vec::<QueueItem>::new())),
+            prompt_busy: Arc::new(Mutex::new(false)),
             manager_cell,
         };
 
@@ -759,6 +764,17 @@ impl AcpSession {
     /// Remove an item from the queue by index.
     pub async fn queue_remove(self: &Arc<Self>, index: usize) -> Option<()> {
         crate::prompt_impl::queue_remove(self, index).await
+    }
+
+    /// True if a prompt turn is in progress (including queue draining).
+    pub async fn is_prompt_busy(&self) -> bool {
+        *self.prompt_busy.lock().await
+    }
+
+    /// Set the busy flag (for testing only).
+    #[doc(hidden)]
+    pub async fn set_prompt_busy(&self, val: bool) {
+        *self.prompt_busy.lock().await = val;
     }
 }
 

@@ -1,5 +1,5 @@
 import { Component } from '../base.js';
-import { renderMarkdown } from '../markdownRenderer.js';
+import { StreamingMarkdownRenderer } from '../streamingMarkdown.js';
 import type { AcpNotification } from '../../acp-utils.js';
 
 interface ContentBlock {
@@ -12,12 +12,13 @@ interface ContentBlock {
 }
 
 export class UserMessage extends Component {
-	private _text = '';
+	private _mdRenderer: StreamingMarkdownRenderer;
 	private _contentEl: HTMLElement;
 
 	constructor() {
 		super('div', 'sc-user-msg');
 		this._contentEl = this.append('div', 'sc-user-msg-content');
+		this._mdRenderer = new StreamingMarkdownRenderer(this._contentEl);
 	}
 
 	appendNotification(notification: AcpNotification): void {
@@ -40,11 +41,15 @@ export class UserMessage extends Component {
 			}).join('');
 		}
 
-		this._text += text;
-		this._contentEl.innerHTML = renderMarkdown(this._text);
+		this._mdRenderer.update(text);
 	}
 
 	stopStreaming(): void {
-		// No-op
+		this._mdRenderer.flush();
+	}
+
+	override dispose(): void {
+		this._mdRenderer.dispose();
+		super.dispose();
 	}
 }

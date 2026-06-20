@@ -5,18 +5,30 @@
 //! - `task_read` / `task_write` are pure CRUD on `OrchestrationState.task_list`.
 //! - `_send` sets `WaitingForResponse`, returns immediately, then spawns an
 //!   async callback that: prompts the worker, re-prompts for a summary,
-//!   stashes the summary into `OrchestrationState`, sets `Responding`, and
-//!   wakes the caller's task loop via `delegation_notify`.
+//!   captures the summary, sets `Responding`, and sends the summary back to
+//!   the caller via `session/prompt` (caller.prompt). The prompt queue
+//!   handles serialization — if the caller is busy, the summary is queued.
+//!   `delegation_notify` wakes the task loop if one is running.
 //! - `task_send` populates a target session's task list.
-//! - The Ralph loop in `prompt_2.rs` blocks on `delegation_notify` when
+//! - The task loop in `prompt_2.rs` blocks on `delegation_notify` when
 //!   `WaitingForResponse`, so no frontend roundtrip is needed.
 
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use agent_client_protocol_schema as acp;
+
 use super::ToolContext;
 use crate::session::{SessionEvent, Task, TaskStatus};
+use crate::manager::AcpSessionManager;
 use crate::acp_log;
+
+/// Helper: create a text content block as a JSON Value for prompt().
+fn text_block(text: impl Into<String>) -> Value {
+    serde_json::to_value(&acp::ContentBlock::Text(
+        acp::TextContent::new(text)
+    )).unwrap()
+}
 
 // ─── _send ────────────────────────────────────────────────────────────────
 
@@ -28,17 +40,13 @@ use crate::acp_log;
 /// 3. Spawned task: re-prompts worker with "summarize, call no tools".
 /// 4. Spawned task: captures summary text from the worker's event stream.
 /// 5. Spawned task: sets caller's state to `Responding` with the summary,
-///    then calls `delegation_notify.notify_one()` to wake the Ralph loop.
-///
-/// The Ralph loop sees `Responding`, nags the agent with the worker's summary,
-/// and the agent evaluates and marks the task done (or bounces it back).
+///    sends the summary back to the caller via `session/prompt`, and wakes
+///    the task loop via `delegation_notify`.
 pub async fn send_to_session(params: &Value, ctx: &ToolContext) -> Result<Value, String> {
-    let to_session_id = params
-        .get("toSessionId")
+    let to_session_id = params.get("toSessionId")
         .and_then(|v| v.as_str())
         .ok_or("missing toSessionId")?;
-    let blocks: Vec<Value> = params
-        .get("blocks")
+    let blocks: Vec<Value> = params.get("blocks")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
@@ -46,109 +54,124 @@ pub async fn send_to_session(params: &Value, ctx: &ToolContext) -> Result<Value,
     let from_session_id = ctx.session_id.clone();
     let manager = ctx.manager.as_ref().ok_or("manager not available")?;
 
-    let target_session = manager
-        .get_session(to_session_id)
-        .await
+    // Find target session
+    let target_session = manager.get_session(to_session_id).await
         .ok_or_else(|| format!("target session not found: {}", to_session_id))?;
 
     // Set caller's delegation state to WaitingForResponse
     {
-        let caller = manager
-            .get_session(&from_session_id)
-            .await
+        let caller = manager.get_session(&from_session_id).await
             .ok_or_else(|| format!("caller session not found: {}", from_session_id))?;
         caller.orchestration.lock().await.set_waiting_for_response();
     }
 
-    // Spawn the async two-step flow
+    // Spawn async task to handle the full send flow
     let manager = manager.clone();
-    let target = target_session.clone();
-    let from = from_session_id.clone();
-    let to = to_session_id.to_string();
+    let target_session = target_session.clone();
+    let from_session_id_clone = from_session_id.clone();
+    let to_session_id_clone = to_session_id.to_string();
 
     tokio::spawn(async move {
-        // Subscribe to worker events BEFORE prompting so we don't miss chunks
-        let mut event_rx = target.subscribe();
+        // Step 1: Send prompt to target
+        let acp_blocks: Vec<Value> = blocks.iter()
+            .cloned()
+            .collect();
 
-        // Step 1: Send the work to the worker
-        if let Err(e) = target.run_prompt(blocks).await {
-            acp_log!("ERROR", "_send: worker prompt failed: {}", e);
-            set_responding_and_notify(&manager, &from, &format!("Error sending to worker: {e}")).await;
+        if let Err(e) = target_session.prompt(acp_blocks).await {
+            acp_log!("ERROR", "send_to_session: prompt failed: {}", e);
+            send_error_callback(&manager, &from_session_id_clone, &to_session_id_clone, &e.to_string()).await;
             return;
         }
 
-        // Step 2: Re-prompt worker for summary (no tools)
-        let summary_blocks = vec![json!({
-            "type": "text",
-            "text": "Summarize what you just accomplished. Do not call any tools. \
-                     Provide a RESTful markdown summary of what you did and any files you changed."
-        })];
+        // Step 2: Re-prompt for summary (no tools)
+        let summary_blocks = vec![text_block(
+            "Summarize what you just accomplished in a lengthy RESTful markdown in the chat describing what you did and. Do not call any tools."
+        )];
 
-        if let Err(e) = target.run_prompt(summary_blocks).await {
-            acp_log!("ERROR", "_send: worker summary prompt failed: {}", e);
-            set_responding_and_notify(&manager, &from, &format!("Error getting summary: {e}")).await;
+        // Subscribe to events before prompting so we don't miss chunks
+        let mut event_rx = target_session.subscribe();
+
+        if let Err(e) = target_session.prompt(summary_blocks).await {
+            acp_log!("ERROR", "send_to_session: summary prompt failed: {}", e);
+            send_error_callback(&manager, &from_session_id_clone, &to_session_id_clone, &e.to_string()).await;
             return;
         }
 
-        // Step 3: Capture summary text from the worker's event stream
+        // Step 3: Capture summary text from events
         let mut summary = String::new();
         while let Ok(event) = event_rx.recv().await {
-            match event {
-                SessionEvent::Update { ref update, .. } => {
-                    match update.get("sessionUpdate").and_then(|v| v.as_str()) {
-                        Some("agent_message_chunk") => {
-                            if let Some(text) = update
-                                .get("content")
-                                .and_then(|c| c.get("text"))
-                                .and_then(|t| t.as_str())
-                            {
-                                summary.push_str(text);
-                            }
+            if let SessionEvent::Update { ref update, .. } = event {
+                match update.get("sessionUpdate").and_then(|v| v.as_str()) {
+                    Some("agent_message_chunk") => {
+                        if let Some(text) = update.get("content")
+                            .and_then(|c| c.get("text"))
+                            .and_then(|t| t.as_str())
+                        {
+                            summary.push_str(text);
                         }
-                        Some("prompt_complete") | Some("prompt_state") => {
-                            if update.get("stopReason").is_some() {
-                                break;
-                            }
-                        }
-                        _ => {}
                     }
+                    Some("prompt_complete") => break,
+                    _ => {}
                 }
-                SessionEvent::Disconnected { .. } => break,
             }
         }
 
-        if summary.is_empty() {
-            summary = "(worker produced no summary text)".to_string();
+        // Step 4: Send the summary back to the caller via session/prompt.
+        // The prompt queue handles serialization: if the caller is busy
+        // (e.g. its task loop is running), the summary is queued and drained
+        // after the current turn. If the caller is idle, it's sent immediately.
+        // delegation_notify wakes the task loop if one is blocked waiting.
+        if let Some(caller_session) = manager.get_session(&from_session_id_clone).await {
+            caller_session.orchestration.lock().await.set_responding(summary.clone());
+
+            let reply_blocks = vec![text_block(format!(
+                "Response from session {}:\n\n{}",
+                to_session_id_clone, summary
+            ))];
+            if let Err(e) = caller_session.prompt(reply_blocks).await {
+                acp_log!("ERROR", "send_to_session: sending reply to calling agent failed: {}", e);
+                send_error_callback(&manager, &from_session_id_clone, &to_session_id_clone, &e.to_string()).await;
+                return;
+            }
+
+            caller_session.delegation_notify.notify_one();
+
+            acp_log!("INFO", "Sent _send callback from {} to {}: {}",
+                     to_session_id_clone, from_session_id_clone, summary);
         }
-
-        acp_log!("INFO", "_send: callback from {} to {}: {} chars", to, from, summary.len());
-
-        // Step 4: Set Responding + stash summary, then wake the caller's loop
-        set_responding_and_notify(&manager, &from, &summary).await;
     });
 
-    acp_log!("INFO", "_send: initiated from {} to {}", from_session_id, to_session_id);
+    // Return immediately — agent's turn continues
+    acp_log!("INFO", "send_to_session: initiated async send from {} to {}",
+             from_session_id, to_session_id);
 
     serde_json::to_value(json!({
         "status": "sent",
-        "toSessionId": to_session_id,
+        "toSessionId": to_session_id
     }))
     .map_err(|e| e.to_string())
 }
 
-/// Set the caller's delegation state to Responding with the summary,
-/// then wake the task loop.
-async fn set_responding_and_notify(
-    manager: &Arc<crate::manager::AcpSessionManager>,
+/// Send an error back to the calling session via session/prompt.
+async fn send_error_callback(
+    manager: &Arc<AcpSessionManager>,
     from_session_id: &str,
-    summary: &str,
+    to_session_id: &str,
+    error: &str,
 ) {
-    if let Some(caller) = manager.get_session(from_session_id).await {
-        {
-            let mut orch = caller.orchestration.lock().await;
-            orch.set_responding(summary.to_string());
+    if let Some(caller_session) = manager.get_session(from_session_id).await {
+        caller_session.orchestration.lock().await
+            .set_responding(format!("Error: {}", error));
+
+        let reply_blocks = vec![text_block(format!(
+            "Error from session {}: {}",
+            to_session_id, error
+        ))];
+        if let Err(e) = caller_session.prompt(reply_blocks).await {
+            acp_log!("ERROR", "send_error_callback: failed to send error to caller: {}", e);
         }
-        caller.delegation_notify.notify_one();
+
+        caller_session.delegation_notify.notify_one();
     }
 }
 
@@ -297,7 +320,7 @@ fn parse_status(s: &str) -> Result<TaskStatus, String> {
 /// Send a batch of tasks to an orchestrator session.
 ///
 /// Populates the target session's task list, then kicks off the target's
-/// Ralph loop (which promotes the first Pending task → InProgress and prompts
+/// task loop (which promotes the first Pending task → InProgress and prompts
 /// the orchestrator with it). The loop is concurrency-guarded, so if the
 /// orchestrator is already mid-loop this is a safe no-op — the existing loop
 /// picks up the freshly-populated tasks on its next `determine_next_prompt`.
@@ -353,7 +376,7 @@ pub async fn task_send(params: &Value, ctx: &ToolContext) -> Result<Value, Strin
         to_session_id
     );
 
-    // Kick off the target orchestrator's Ralph loop. It will promote the first
+    // Kick off the target orchestrator's task loop. It will promote the first
     // Pending task and prompt the orchestrator with it. Guarded so a re-send
     // while the loop is active is a no-op (the live loop drains the new tasks).
     let target = target_session.clone();

@@ -348,30 +348,6 @@ async fn send_to_session_delivers_callback() -> Result<()> {
     let caller_sid = caller.session_id();
     let worker_sid = worker.session_id();
 
-    // Set up the caller with a current task and WaitingForResponse state
-    // (simulating that it just delegated)
-    {
-        let mut orch = caller.orchestration.lock().await;
-        orch.task_list.push(sidex_acp::session::Task {
-            id: "t1".to_string(),
-            title: "Delegate this task".to_string(),
-            description: None,
-            status: TaskStatus::InProgress,
-            assigned_to: Some(worker_sid.clone()),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        });
-        orch.current_task = Some(sidex_acp::session::Task {
-            id: "t1".to_string(),
-            title: "Delegate this task".to_string(),
-            description: None,
-            status: TaskStatus::InProgress,
-            assigned_to: Some(worker_sid.clone()),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        });
-    }
-
     // Call _send directly via the tool handler
     use sidex_acp::tools::ToolContext;
     use std::collections::HashMap;
@@ -411,24 +387,25 @@ async fn send_to_session_delivers_callback() -> Result<()> {
     }
 
     // The spawned callback should prompt the worker, re-prompt for summary,
-    // then set the caller to Responding with a summary.
-    // Wait for the callback to complete (up to 10s).
+    // capture the summary, then send it back to the caller via session/prompt.
+    // For a plain agent (no task loop), the summary is delivered via
+    // caller.prompt(), which resets delegation state. So we verify delivery
+    // by checking that the caller's prompt_turn_state reaches Complete —
+    // meaning the summary was sent as a session/prompt and the agent responded.
     let mut waited = 0;
     loop {
         tokio::time::sleep(Duration::from_millis(200)).await;
         waited += 200;
-        let orch = caller.orchestration.lock().await;
-        if orch.delegation_state == sidex_acp::session::DelegationState::Responding {
-            // Callback arrived! Check the summary
-            let summary = orch.delegation_summary.as_deref().unwrap_or("");
-            println!("Callback arrived after {}ms, summary: {} chars", waited, summary.len());
-            // The echo agent echoes back the prompt text and the summary prompt text.
-            // The summary should contain something.
-            assert!(!summary.is_empty(), "summary should not be empty");
+        let state = caller.prompt_state().await;
+        if matches!(
+            state,
+            sidex_acp::session::PromptTurnState::Complete { .. }
+        ) {
+            println!("Callback delivered summary via session/prompt after {}ms", waited);
             break;
         }
         if waited > 10000 {
-            panic!("_send callback did not arrive within 10s");
+            panic!("_send callback did not deliver summary within 10s");
         }
     }
 
@@ -569,7 +546,7 @@ async fn orchestration_e2e_tripartite_flow() -> Result<()> {
 
     // Kick off the flow: prompt the instructor. Its scripted turn emits a
     // _task/send to the orchestrator, which (per our fix) auto-starts the
-    // orchestrator's Ralph loop. From here everything is async + autonomous.
+    // orchestrator's task loop. From here everything is async + autonomous.
     let blocks = vec![json!({"type": "text", "text": "begin orchestration"})];
     instructor.prompt(blocks).await?;
 
@@ -731,4 +708,84 @@ async fn terminal_kill_stops_long_running_process() -> Result<()> {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     panic!("kill_terminal did not stop sleep 30 within 5s");
+}
+
+// ─── Queue serialization tests ───────────────────────────────────────────
+
+#[tokio::test]
+async fn concurrent_prompts_are_queued_not_raced() -> Result<()> {
+    let agent_manager = Arc::new(AgentManager::new());
+    let manager = Arc::new(AcpSessionManager::new(agent_manager));
+
+    let session = spawn_echo_session(&manager, "queue-test").await?;
+    let sid = session.session_id();
+
+    // Subscribe to events
+    let mut rx = session.subscribe();
+
+    // Fire two prompts concurrently. With the queue, the second should be
+    // queued and sent after the first completes — not raced over stdin.
+    let s1 = session.clone();
+    let s2 = session.clone();
+    let h1 = tokio::spawn(async move { s1.prompt(vec![json!({"type": "text", "text": "first"})]).await });
+    let h2 = tokio::spawn(async move { s2.prompt(vec![json!({"type": "text", "text": "second"})]).await });
+
+    // Both should succeed
+    h1.await.map_err(|e| anyhow::anyhow!("h1 panicked: {e}"))??;
+    h2.await.map_err(|e| anyhow::anyhow!("h2 panicked: {e}"))??;
+
+    // We should see both messages echoed, in order
+    let mut texts = Vec::new();
+    while let Ok(event) = timeout(Duration::from_secs(2), rx.recv()).await {
+        if let Ok(SessionEvent::Update { update, .. }) = event {
+            if update.get("sessionUpdate").and_then(|v| v.as_str()) == Some("agent_message_chunk") {
+                if let Some(text) = update.get("content").and_then(|c| c.get("text")).and_then(|t| t.as_str()) {
+                    texts.push(text.to_string());
+                }
+            }
+        }
+    }
+    assert!(texts.iter().any(|t| t.contains("first")), "should see first message");
+    assert!(texts.iter().any(|t| t.contains("second")), "should see second message");
+
+    // Queue should be empty after both complete
+    let queue_len = session.queue_len().await;
+    assert_eq!(queue_len, 0, "queue should be drained");
+
+    // Busy flag should be false
+    assert!(!session.is_prompt_busy().await, "prompt_busy should be false after all prompts complete");
+
+    manager.close_session(&sid).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_returns_immediately_when_busy() -> Result<()> {
+    let agent_manager = Arc::new(AgentManager::new());
+    let manager = Arc::new(AcpSessionManager::new(agent_manager));
+
+    let session = spawn_echo_session(&manager, "busy-test").await?;
+    let sid = session.session_id();
+
+    // Manually set busy so we can test the queue path
+    session.set_prompt_busy(true).await;
+
+    // This should queue and return Ok immediately
+    let result = session.prompt(vec![json!({"type": "text", "text": "queued msg"})]).await;
+    assert!(result.is_ok(), "queued prompt should return Ok immediately");
+
+    // It should be in the queue
+    assert_eq!(session.queue_len().await, 1, "prompt should be in the queue");
+
+    // Clear busy and drain manually
+    session.set_prompt_busy(false).await;
+    // Actually send the queued prompt
+    let drain_result = session.prompt(vec![json!({"type": "text", "text": "drain trigger"})]).await;
+    assert!(drain_result.is_ok(), "drain should succeed");
+
+    // Queue should be empty
+    assert_eq!(session.queue_len().await, 0, "queue should be drained");
+
+    manager.close_session(&sid).await;
+    Ok(())
 }

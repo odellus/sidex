@@ -11,20 +11,14 @@
 //!   hands off to `run_task_loop()`.
 //! - `run_task_loop()` repeatedly calls `run_prompt` according to the
 //!   delegation state machine in `OrchestrationState`.
-//! - Tool handlers (`_task/write`, `_send`, etc.) only mutate state. They do
-//!   not spawn loops or call `session/prompt` themselves — except `_send`,
-//!   which spawns an async callback that re-enters `run_task_loop`.
-//!
-//! ## Delegation state machine
-//!
-//! ```text
-//! NotCalled → WaitingForResponse → Responding → NotCalled
-//!     ↑___________________________________________|
-//! ```
-//!
-//! - `NotCalled`: Agent is free to delegate the current task via `send_prompt`.
-//! - `WaitingForResponse`: Agent delegated; we wait for the worker's summary.
-//! - `Responding`: Worker summary received; agent must evaluate and mark done.
+//! - When `WaitingForResponse`, the task loop breaks (returns). This releases
+//!   `prompt_busy` so the `_send` callback's `caller.prompt()` can deliver the
+//!   worker's summary. That new `prompt()` call re-enters `run_task_loop`
+//!   with `Responding` state, which sends a nag (without the summary — the
+//!   summary was already delivered by `_send`).
+//! - `reset_delegation()` is called by the frontend handler (for
+//!   user-initiated prompts), NOT by `prompt()` itself, so `_send`'s
+//!   `caller.prompt()` preserves the `Responding` state.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -35,7 +29,7 @@ use serde_json::Value;
 use agent_client_protocol_schema as acp;
 use acp::{ContentBlock, PromptRequest, SessionId};
 
-use crate::session::{AcpSession, PromptTurnState};
+use crate::session::{AcpSession, PromptTurnState, QueueItem};
 use crate::acp_log;
 
 /// RAII guard that resets the `task_loop_running` flag on drop, so the flag is
@@ -51,20 +45,77 @@ impl Drop for TaskLoopGuard {
 
 /// Send a prompt. Returns Ok when complete, Err on failure.
 ///
-/// After the turn completes, if the session has an active task list, this
-/// hands control to `run_task_loop()`.
+/// If a prompt turn is already in progress (including queue draining), the
+/// blocks are queued and this returns Ok immediately — they will be sent
+/// after the current turn and all previously-queued prompts complete.
+/// This serializes all inbound prompts so concurrent calls (user typing
+/// while agent works, _send callbacks, task_send) never race.
 pub async fn prompt(session: &Arc<AcpSession>, blocks: Vec<Value>) -> Result<()> {
-    // Reset delegation state for a new user-initiated prompt
+    // Try to acquire the busy lock. If already busy, queue and return.
     {
-        let mut orch = session.orchestration.lock().await;
-        orch.reset_delegation();
+        let mut busy = session.prompt_busy.lock().await;
+        if *busy {
+            session.queue.lock().await.push(QueueItem::Prompt(blocks));
+            acp_log!(
+                "INFO",
+                "prompt: session {} busy, queued (queue len={})",
+                session.session_id(),
+                session.queue.lock().await.len()
+            );
+            return Ok(());
+        }
+        *busy = true;
     }
 
+    // We hold the busy lock. Run the prompt, drain the queue, then release.
     session.run_prompt(blocks).await?;
 
     if session.has_active_task_loop().await {
         session.run_task_loop().await?;
     }
+
+    // Drain queued prompts
+    loop {
+        let next = {
+            let mut q = session.queue.lock().await;
+            if q.is_empty() {
+                break;
+            }
+            q.remove(0)
+        };
+        match next {
+            QueueItem::Prompt(blocks) => {
+                acp_log!(
+                    "INFO",
+                    "prompt: draining queued prompt for session {}",
+                    session.session_id()
+                );
+                session.run_prompt(blocks).await?;
+                if session.has_active_task_loop().await {
+                    session.run_task_loop().await?;
+                }
+            }
+            QueueItem::Task(task) => {
+                acp_log!(
+                    "INFO",
+                    "prompt: draining queued task for session {}",
+                    session.session_id()
+                );
+                // Treat a queued task as a text prompt with its title
+                let blocks = vec![serde_json::json!({
+                    "type": "text",
+                    "text": format!("Task: {}", task.title),
+                })];
+                session.run_prompt(blocks).await?;
+                if session.has_active_task_loop().await {
+                    session.run_task_loop().await?;
+                }
+            }
+        }
+    }
+
+    // Release the busy lock
+    *session.prompt_busy.lock().await = false;
 
     Ok(())
 }
@@ -196,12 +247,15 @@ impl AcpSession {
             || (!orch.task_list.is_empty() && !orch.summarized)
     }
 
-    /// Run the task-aware Ralph loop.
+    /// Run the task-aware task loop.
     ///
     /// Repeatedly prompts the agent according to the current task and
     /// delegation state. When the agent delegates via `_send`, the loop
-    /// blocks on `delegation_notify` until the callback arrives (instead
-    /// of stopping and relying on an external re-trigger).
+    /// breaks (returns) — this releases `prompt_busy` so the `_send`
+    /// callback's `caller.prompt()` can deliver the worker's summary.
+    /// That new `prompt()` call re-enters `run_task_loop` with `Responding`
+    /// state, which sends a nag (without the summary — the summary was
+    /// already delivered by `_send`).
     /// Stops when there's nothing left to do or the user cancels.
     pub async fn run_task_loop(&self) -> Result<()> {
         // Concurrency guard: at most one task loop per session. If `task_send`
@@ -241,17 +295,13 @@ impl AcpSession {
                     }
                 }
                 None => {
-                    // Check if we're waiting for an async _send callback
-                    let is_waiting = {
-                        let orch = self.orchestration.lock().await;
-                        orch.delegation_state == crate::session::DelegationState::WaitingForResponse
-                    };
-                    if is_waiting {
-                        // Block until the callback arrives or the user cancels
-                        self.delegation_notify.notified().await;
-                    } else {
-                        break;
-                    }
+                    // WaitingForResponse: the agent delegated via _send.
+                    // Break out of the loop so prompt() can release
+                    // prompt_busy. When _send's callback delivers the summary
+                    // via caller.prompt(), that new prompt() call will
+                    // re-enter run_task_loop with Responding state.
+                    // NotCalled with nothing to do: just break.
+                    break;
                 }
             }
         }

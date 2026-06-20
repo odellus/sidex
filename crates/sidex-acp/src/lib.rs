@@ -16,7 +16,7 @@ pub mod manager;
 // ── Toggle prompt implementation ──────────────────────────────────────────
 // Use one of the following (comment out the other):
 // pub mod prompt;    // v1 — basic prompt + queue, no orchestration
-pub mod prompt_2; // v2 — with task orchestration (Ralph loop)
+pub mod prompt_2; // v2 — with task orchestration (task loop)
 
 // Re-export the active implementation as `prompt_impl`
 pub mod prompt_impl;

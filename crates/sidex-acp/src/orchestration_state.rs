@@ -1,6 +1,6 @@
 //! Pure orchestration state machine — no I/O, fully unit-testable.
 //!
-//! This is the decision core of the Ralph loop. It owns the task list,
+//! This is the decision core of the task loop. It owns the task list,
 //! current task pointer, delegation state, and worker summary. The
 //! `determine_next_prompt` method is the single entry point: given the
 //! current state, it decides what (if anything) to prompt the agent with
@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use crate::session::{DelegationState, Task, TaskStatus};
 
-/// Pure orchestration state — the testable core of the Ralph loop.
+/// Pure orchestration state — the testable core of the task loop.
 #[derive(Debug)]
 pub struct OrchestrationState {
     /// The plan / TODO — single source of truth for task status.
@@ -64,10 +64,11 @@ impl OrchestrationState {
                     self.advance_current_task();
                     self.start_next_task()
                 } else {
-                    let summary = self.delegation_summary.take().unwrap_or_else(|| {
-                        "(no summary was provided by the worker)".to_string()
-                    });
-                    Some(Self::nag_evaluate(&summary))
+                    // The worker's summary was already delivered to the agent
+                    // via caller.prompt() by the _send callback. The nag just
+                    // tells the agent to evaluate and act — it does NOT repeat
+                    // the summary.
+                    Some(Self::nag_evaluate())
                 }
             }
 
@@ -191,17 +192,13 @@ impl OrchestrationState {
         })]
     }
 
-    fn nag_evaluate(summary: &str) -> Vec<Value> {
+    fn nag_evaluate() -> Vec<Value> {
         vec![json!({
             "type": "text",
-            "text": format!(
-                "You received a response from the delegated worker:\n\n\
-                 {}\n\n\
-                 Review it and mark the task done with the task_write tool \
-                 (action=\"update\", status=\"completed\") if acceptable, \
-                 or send it back to the worker with the send_prompt tool if it needs more work.",
-                summary
-            )
+            "text": "You have received a response from the delegated worker. \
+                     Review it and mark the task done with the task_write tool \
+                     (action=\"update\", status=\"completed\") if acceptable, \
+                     or send it back to the worker with the send_prompt tool if it needs more work."
         })]
     }
 
@@ -292,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn responding_task_not_done_nags_with_summary() {
+    fn responding_task_not_done_nags_without_summary() {
         let mut s = OrchestrationState {
             delegation_state: DelegationState::Responding,
             task_list: vec![in_progress("t1", "first")],
@@ -303,11 +300,11 @@ mod tests {
 
         let blocks = s.determine_next_prompt().expect("should nag");
         let text = text_of(&blocks);
-        assert!(text.contains("I refactored the auth module"));
+        // Nag does NOT include the summary — that was delivered separately
+        // via caller.prompt() by the _send callback.
+        assert!(!text.contains("I refactored the auth module"));
         assert!(text.contains("task_write"));
         assert!(text.contains("send_prompt"));
-        // Summary should be consumed after nagging
-        assert!(s.delegation_summary.is_none());
     }
 
     #[test]
@@ -316,12 +313,15 @@ mod tests {
             delegation_state: DelegationState::Responding,
             task_list: vec![pending("t1", "first")],
             current_task: None,
-            delegation_summary: Some("done".to_string()),
+            delegation_summary: Some("the summary content".to_string()),
             ..Default::default()
         };
 
         let blocks = s.determine_next_prompt().expect("should nag");
-        assert!(text_of(&blocks).contains("done"));
+        // Nag does NOT include the summary text — it was delivered separately
+        // via caller.prompt() by the _send callback.
+        assert!(!text_of(&blocks).contains("the summary content"));
+        assert!(text_of(&blocks).contains("task_write"));
     }
 
     #[test]

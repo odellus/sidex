@@ -1,5 +1,5 @@
 import { Component, $, DOM } from '../base.js';
-import { renderMarkdown, renderMermaidDiagrams } from '../markdownRenderer.js';
+import { StreamingMarkdownRenderer } from '../streamingMarkdown.js';
 import type { AcpNotification } from '../../acp-utils.js';
 
 export class ThinkingBlock extends Component {
@@ -12,8 +12,7 @@ export class ThinkingBlock extends Component {
 	private _collapsed = false;
 	private _startTime = Date.now();
 	private _timerHandle: ReturnType<typeof setInterval> | null = null;
-	private _text = '';
-	private _renderTimer: ReturnType<typeof setTimeout> | undefined;
+	private _mdRenderer: StreamingMarkdownRenderer;
 
 	constructor() {
 		super('div', 'sc-thinking-block');
@@ -32,20 +31,13 @@ export class ThinkingBlock extends Component {
 		this._chevronEl.textContent = '▾';
 
 		this._contentEl = this.append('div', 'sc-thinking-content');
+		this._mdRenderer = new StreamingMarkdownRenderer(this._contentEl);
 	}
 
 	appendNotification(notification: AcpNotification): void {
 		const update = notification.data.update;
 		const content = update.content as { text?: string } | undefined;
-		const text = content?.text || '';
-		this._text += text;
-
-		this._contentEl.innerHTML = renderMarkdown(this._text);
-
-		if (this._renderTimer) { clearTimeout(this._renderTimer); }
-		this._renderTimer = setTimeout(() => {
-			renderMermaidDiagrams(this._contentEl);
-		}, 200);
+		this._mdRenderer.update(content?.text || '');
 
 		if (!this._streaming) {
 			this.startStreaming();
@@ -68,6 +60,7 @@ export class ThinkingBlock extends Component {
 			this._timerHandle = null;
 		}
 		this._updateElapsed();
+		this._mdRenderer.flush();
 		// Auto-collapse after thinking is complete
 		this._collapse();
 	}
@@ -102,12 +95,10 @@ export class ThinkingBlock extends Component {
 	}
 
 	override dispose(): void {
+		this._mdRenderer.dispose();
 		if (this._timerHandle) {
 			clearInterval(this._timerHandle);
 			this._timerHandle = null;
-		}
-		if (this._renderTimer) {
-			clearTimeout(this._renderTimer);
 		}
 		super.dispose();
 	}
