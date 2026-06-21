@@ -260,6 +260,7 @@ export class RichTextEditor extends Component {
 	private _editor: Editor | null = null;
 	private _editorEl: HTMLElement;
 	private _disabled = false;
+	private _hasContent = false;
 
 	private readonly _onSend = this._register(new Emitter<{ blocks: ContentBlock[]; text?: string }>());
 	readonly onSend: Event<{ blocks: ContentBlock[]; text?: string }> = this._onSend.event;
@@ -381,7 +382,10 @@ export class RichTextEditor extends Component {
 					return false;
 				},
 			},
-			onUpdate: () => {
+			onUpdate: ({ editor }) => {
+				// O(1) check — isEmpty is a simple document state check, not a
+				// full tree walk like getJSON() + extractContentBlocks().
+				this._hasContent = !editor.isEmpty;
 				this._onUpdate.fire();
 			},
 		});
@@ -392,13 +396,7 @@ export class RichTextEditor extends Component {
 	}
 
 	get hasContent(): boolean {
-		if (!this._editor) return false;
-		const json = this._editor.getJSON();
-		const blocks = extractContentBlocks(json);
-		return blocks.some(b => {
-			if (b.type === 'text') return (b.text || '').trim().length > 0;
-			return true;
-		});
+		return this._hasContent;
 	}
 
 	setEditable(editable: boolean): void {
@@ -412,6 +410,13 @@ export class RichTextEditor extends Component {
 
 	clear(): void {
 		this._editor?.commands.clearContent();
+	}
+
+	/** Load text into the editor, replacing current content. */
+	setContent(text: string): void {
+		if (!this._editor) return;
+		this._editor.chain().clearContent().insertContent(text).focus().run();
+		this._hasContent = text.length > 0;
 	}
 
 	async send(): Promise<void> {

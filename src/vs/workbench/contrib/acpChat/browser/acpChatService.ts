@@ -7,7 +7,7 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { AcpStore, ConnectionStatus, PromptTurnState, ControlSignal, SessionConfigOption } from './acpStore.js';
+import { AcpStore, ConnectionStatus, PromptTurnState, ControlSignal, SessionConfigOption, QueuedItem, PlanEntry } from './acpStore.js';
 import type { AcpNotification } from './acp-utils.js';
 import { invoke } from '../../../../sidex-bridge.js';
 import type { ContentBlock } from '@agentclientprotocol/sdk';
@@ -57,11 +57,22 @@ export interface IAcpChatService {
 	readonly onDidChangeConfigOptions: Event<SessionConfigOption[]>;
 	readonly onDidReceiveControlSignal: Event<ControlSignal>;
 	readonly onDidChangeAgents: Event<void>;
+	readonly onDidChangeQueue: Event<void>;
+
+	// Queue
+	readonly queuedItems: QueuedItem[];
+
+	// Plan
+	readonly planEntries: PlanEntry[];
+	readonly onDidChangePlan: Event<void>;
 
 	// Actions
 	connect(): Promise<void>;
 	sendMessage(text: string, blocks?: ContentBlock[]): void;
 	stopStreaming(): void;
+	removeQueuedItem(index: number): void;
+	clearQueue(): void;
+	getQueuedItem(index: number): QueuedItem | undefined;
 	setMode(mode: string): void;
 	switchAgent(agentName: string): Promise<void>;
 	clearMessages(): void;
@@ -109,11 +120,19 @@ class AcpChatServiceImpl implements IAcpChatService {
 	private readonly _onDidChangeAgents = new Emitter<void>();
 	readonly onDidChangeAgents = this._onDidChangeAgents.event;
 
+	private readonly _onDidChangeQueue = new Emitter<void>();
+	readonly onDidChangeQueue = this._onDidChangeQueue.event;
+
+	private readonly _onDidChangePlan = new Emitter<void>();
+	readonly onDidChangePlan = this._onDidChangePlan.event;
+
 	get connectionState(): ConnectionStatus { return this._store.connectionStatus; }
 	get notifications(): readonly AcpNotification[] { return this._store.notifications; }
 	get isStreaming(): boolean { return this._store.isStreaming; }
 	get configOptions(): SessionConfigOption[] { return this._store.configOptions; }
 	get serverModel(): string { return this._model; }
+	get queuedItems(): QueuedItem[] { return this._store.queuedItems; }
+	get planEntries(): PlanEntry[] { return this._store.planEntries; }
 
 	constructor(
 		@IWorkspaceContextService private readonly _workspaceContext: IWorkspaceContextService,
@@ -133,6 +152,12 @@ class AcpChatServiceImpl implements IAcpChatService {
 		});
 		this._store.onDidChangeConfigOptions(options => {
 			this._onDidChangeConfigOptions.fire(options);
+		});
+		this._store.onDidChangeQueue(() => {
+			this._onDidChangeQueue.fire();
+		});
+		this._store.onDidChangePlan(() => {
+			this._onDidChangePlan.fire();
 		});
 
 		// Initialize cwd from workspace
@@ -202,6 +227,18 @@ class AcpChatServiceImpl implements IAcpChatService {
 
 	stopStreaming(): void {
 		this._store.stopStreaming();
+	}
+
+	removeQueuedItem(index: number): void {
+		this._store.removeQueuedItem(index);
+	}
+
+	clearQueue(): void {
+		this._store.clearQueue();
+	}
+
+	getQueuedItem(index: number): QueuedItem | undefined {
+		return this._store.getQueuedItem(index);
 	}
 
 	setMode(mode: string): void {

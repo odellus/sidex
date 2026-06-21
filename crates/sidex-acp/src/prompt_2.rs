@@ -62,6 +62,7 @@ pub async fn prompt(session: &Arc<AcpSession>, blocks: Vec<Value>) -> Result<()>
                 session.session_id(),
                 session.queue.lock().await.len()
             );
+            session.broadcast_queue_state().await;
             return Ok(());
         }
         *busy = true;
@@ -76,6 +77,10 @@ pub async fn prompt(session: &Arc<AcpSession>, blocks: Vec<Value>) -> Result<()>
 
     // Drain queued prompts
     loop {
+        if session.is_cancelled().await {
+            acp_log!("INFO", "prompt: cancelled, stopping queue drain for session {}", session.session_id());
+            break;
+        }
         let next = {
             let mut q = session.queue.lock().await;
             if q.is_empty() {
@@ -83,6 +88,7 @@ pub async fn prompt(session: &Arc<AcpSession>, blocks: Vec<Value>) -> Result<()>
             }
             q.remove(0)
         };
+        session.broadcast_queue_state().await;
         match next {
             QueueItem::Prompt(blocks) => {
                 acp_log!(
@@ -170,24 +176,32 @@ impl AcpSession {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown")
                     .to_string();
-                let state = PromptTurnState::Complete {
-                    stop_reason: stop_reason.clone(),
-                };
                 {
                     let mut s = self.prompt_turn_state.lock().await;
-                    *s = state.clone();
+                    // Don't overwrite Cancelled — cancel_prompt set it and the
+                    // drain loop checks it to decide whether to keep dequeuing.
+                    if !matches!(*s, PromptTurnState::Cancelled) {
+                        let state = PromptTurnState::Complete {
+                            stop_reason: stop_reason.clone(),
+                        };
+                        *s = state.clone();
+                        drop(s);
+                        self.broadcast_prompt_state(state);
+                    }
                 }
-                self.broadcast_prompt_state(state);
             }
             Err(e) => {
-                let state = PromptTurnState::Error {
-                    message: e.to_string(),
-                };
                 {
                     let mut s = self.prompt_turn_state.lock().await;
-                    *s = state.clone();
+                    if !matches!(*s, PromptTurnState::Cancelled) {
+                        let state = PromptTurnState::Error {
+                            message: e.to_string(),
+                        };
+                        *s = state.clone();
+                        drop(s);
+                        self.broadcast_prompt_state(state);
+                    }
                 }
-                self.broadcast_prompt_state(state);
             }
         }
 
@@ -330,6 +344,7 @@ pub async fn queue_list(session: &Arc<AcpSession>) -> Vec<crate::session::QueueI
 /// Clear the queue.
 pub async fn queue_clear(session: &Arc<AcpSession>) {
     session.queue.lock().await.clear();
+    session.broadcast_queue_state().await;
 }
 
 /// Remove an item from the queue by index.
@@ -337,6 +352,8 @@ pub async fn queue_remove(session: &Arc<AcpSession>, index: usize) -> Option<()>
     let mut queue = session.queue.lock().await;
     if index < queue.len() {
         queue.remove(index);
+        drop(queue);
+        session.broadcast_queue_state().await;
         Some(())
     } else {
         None

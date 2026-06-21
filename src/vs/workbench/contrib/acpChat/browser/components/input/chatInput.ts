@@ -12,6 +12,17 @@ interface AgentConfig {
 	env: string[];
 }
 
+export interface QueuedItem {
+	id: string;
+	text: string;
+	blocks: ContentBlock[];
+}
+
+export interface PlanEntry {
+	content: string;
+	status: 'pending' | 'in_progress' | 'completed' | 'failed';
+}
+
 function codicon(c: ThemeIcon): HTMLSpanElement {
 	const el = document.createElement('span');
 	el.classList.add(...ThemeIcon.asClassNameArray(c));
@@ -27,6 +38,9 @@ export class ChatInput extends Component {
 	private _agentMenu: HTMLElement;
 	private _currentAgent: AgentConfig | null = null;
 	private _currentModel = '';
+	private _queueEl: HTMLElement;
+	private _planEl: HTMLElement;
+	private _planExpanded: boolean = false;
 
 	private readonly _onSend = this._register(new Emitter<string>());
 	readonly onSend: Event<string> = this._onSend.event;
@@ -43,10 +57,30 @@ export class ChatInput extends Component {
 	private readonly _onModelChange = this._register(new Emitter<string>());
 	readonly onModelChange: Event<string> = this._onModelChange.event;
 
+	private readonly _onRemoveQueuedItem = this._register(new Emitter<number>());
+	readonly onRemoveQueuedItem: Event<number> = this._onRemoveQueuedItem.event;
+
+	private readonly _onClearQueue = this._register(new Emitter<void>());
+	readonly onClearQueue: Event<void> = this._onClearQueue.event;
+
+	private readonly _onEditQueuedItem = this._register(new Emitter<number>());
+	readonly onEditQueuedItem: Event<number> = this._onEditQueuedItem.event;
+
+	private readonly _onSendQueuedItemNow = this._register(new Emitter<number>());
+	readonly onSendQueuedItemNow: Event<number> = this._onSendQueuedItemNow.event;
+
 	constructor(workspaceRoot: string = '') {
 		super('div', 'sc-input-area');
 
 		const container = this.append('div', 'sc-input-container');
+
+		// Queue items (above the rich text editor, like Zed)
+		this._queueEl = DOM.append(container, $('div.sc-queue-items'));
+		this._queueEl.style.display = 'none';
+
+		// Plan panel (above queue, collapsible)
+		this._planEl = DOM.append(container, $('div.sc-plan-panel'));
+		this._planEl.style.display = 'none';
 
 		// Rich text editor
 		this._richEditor = new RichTextEditor('Ask anything...', workspaceRoot);
@@ -151,6 +185,123 @@ export class ChatInput extends Component {
 	setStreaming(streaming: boolean): void {
 		this._sendBtn.style.display = streaming ? 'none' : 'flex';
 		this._stopBtn.style.display = streaming ? 'flex' : 'none';
+	}
+
+	/** Render queued items above the editor. */
+	setQueuedItems(items: QueuedItem[]): void {
+		this._queueEl.innerHTML = '';
+
+		if (items.length === 0) {
+			this._queueEl.style.display = 'none';
+			return;
+		}
+
+		this._queueEl.style.display = 'flex';
+
+		for (let i = 0; i < items.length; i++) {
+			const item = items[i];
+			const row = DOM.append(this._queueEl, $('div.sc-queue-item'));
+			if (i === 0) { row.classList.add('sc-queue-next'); }
+
+			// Status dot — accent for next, muted for others
+			const dot = DOM.append(row, $('span.sc-queue-dot'));
+
+			// Text preview
+			const text = DOM.append(row, $('span.sc-queue-text'));
+			text.textContent = item.text || '(empty)';
+
+			// Action buttons
+			const actions = DOM.append(row, $('div.sc-queue-actions'));
+
+			// Edit — moves content to the rich text editor
+			const editBtn = DOM.append(actions, $('button.sc-queue-btn'));
+			editBtn.title = 'Edit';
+			editBtn.appendChild(codicon(Codicon.edit));
+			this.on(editBtn, 'click', () => this._onEditQueuedItem.fire(i));
+
+			// Remove
+			const delBtn = DOM.append(actions, $('button.sc-queue-btn'));
+			delBtn.title = 'Remove from queue';
+			delBtn.appendChild(codicon(Codicon.trash));
+			this.on(delBtn, 'click', () => this._onRemoveQueuedItem.fire(i));
+
+			// Send Now — cancel current turn + send this immediately
+			const sendBtn = DOM.append(actions, $('button.sc-queue-send-now'));
+			sendBtn.textContent = 'Send Now';
+			this.on(sendBtn, 'click', () => this._onSendQueuedItemNow.fire(i));
+		}
+	}
+
+	/** Load text into the rich text editor (for "Edit" action). */
+	loadTextIntoEditor(text: string): void {
+		this._richEditor.setContent(text);
+	}
+
+	/** Render the plan/task list panel. */
+	setPlanEntries(entries: PlanEntry[]): void {
+		this._planEl.innerHTML = '';
+
+		if (entries.length === 0) {
+			this._planEl.style.display = 'none';
+			return;
+		}
+
+		this._planEl.style.display = 'flex';
+
+		const completed = entries.filter(e => e.status === 'completed' || e.status === 'failed').length;
+		const inProgress = entries.find(e => e.status === 'in_progress');
+		const total = entries.length;
+
+		// Summary bar (collapsible)
+		const summary = DOM.append(this._planEl, $('div.sc-plan-summary'));
+
+		const disclosure = DOM.append(summary, $('span.sc-plan-disclosure'));
+		disclosure.classList.add('codicon');
+		disclosure.classList.add(this._planExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right');
+
+		const label = DOM.append(summary, $('span.sc-plan-label'));
+		if (inProgress && !this._planExpanded) {
+			label.textContent = `Current: ${inProgress.content}`;
+			label.classList.add('sc-plan-current');
+			if (total - completed > 0) {
+				const badge = DOM.append(summary, $('span.sc-plan-badge'));
+				badge.textContent = `${total - completed} left`;
+			}
+		} else {
+			label.textContent = completed === total ? 'All Done' : `Plan  ${completed}/${total}`;
+		}
+
+		this.on(summary, 'click', () => {
+			this._planExpanded = !this._planExpanded;
+			this.setPlanEntries(entries);
+		});
+
+		// Entry rows (when expanded)
+		if (this._planExpanded) {
+			summary.classList.add('sc-plan-summary-expanded');
+			const list = DOM.append(this._planEl, $('div.sc-plan-entries'));
+
+			for (const entry of entries) {
+				const row = DOM.append(list, $('div.sc-plan-entry'));
+
+				const icon = DOM.append(row, $('span.sc-plan-entry-icon'));
+				if (entry.status === 'in_progress') {
+					icon.classList.add('codicon', 'codicon-loading', 'sc-plan-in-progress');
+				} else if (entry.status === 'completed') {
+					icon.classList.add('codicon', 'codicon-check', 'sc-plan-completed');
+				} else if (entry.status === 'failed') {
+					icon.classList.add('codicon', 'codicon-error', 'sc-plan-failed');
+				} else {
+					icon.classList.add('codicon', 'codicon-circle', 'sc-plan-pending');
+				}
+
+				const text = DOM.append(row, $('span.sc-plan-entry-text'));
+				text.textContent = entry.content;
+				if (entry.status === 'completed') {
+					text.classList.add('sc-plan-strikethrough');
+				}
+			}
+		}
 	}
 
 	/** Set the current agent. Called when agent changes. */

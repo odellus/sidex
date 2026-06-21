@@ -21,6 +21,7 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { ScrollManager } from './scrollManager.js';
 import { ChatHeader } from './components/toolbar/chatHeader.js';
 import { ChatInput } from './components/input/chatInput.js';
+import type { PlanEntry } from './components/input/chatInput.js';
 import { UserMessage } from './components/messages/userMessage.js';
 import { ThinkingBlock } from './components/messages/thinkingBlock.js';
 import { AgentMessageGroup } from './components/messages/agentMessage.js';
@@ -43,6 +44,14 @@ export class AcpChatViewPane extends ViewPane {
 	private _input!: ChatInput;
 	private _connectingBar!: HTMLElement;
 	private readonly _viewDisposables = this._register(new DisposableStore());
+
+	// Throttle scroll during streaming. scrollToBottom() forces a synchronous
+	// layout reflow (scrollIntoView), so calling it on every token chunk
+	// starves the main thread — especially when the user is typing in the
+	// input box at the same time. We debounce to ~100ms so it only fires
+	// once per batch of chunks, decoupling scroll from the raw notification
+	// rate.
+	private _scrollTimer: ReturnType<typeof setTimeout> | undefined;
 
 	// Group-based rendering state
 	private _groupComponents: GroupComponent[] = [];
@@ -111,6 +120,27 @@ export class AcpChatViewPane extends ViewPane {
 		this._viewDisposables.add(this._input.onStop(() => this.chatService.stopStreaming()));
 		this._viewDisposables.add(this._input.onAgentChange(agentName => this.chatService.switchAgent(agentName)));
 
+		this._viewDisposables.add(this._input.onRemoveQueuedItem(index => this.chatService.removeQueuedItem(index)));
+		this._viewDisposables.add(this._input.onClearQueue(() => this.chatService.clearQueue()));
+		this._viewDisposables.add(this._input.onEditQueuedItem(index => {
+			const item = this.chatService.getQueuedItem(index);
+			if (item) {
+				this.chatService.removeQueuedItem(index);
+				this._input.loadTextIntoEditor(item.text);
+			}
+		}));
+		this._viewDisposables.add(this._input.onSendQueuedItemNow(index => {
+			const item = this.chatService.getQueuedItem(index);
+			if (item) {
+				this.chatService.removeQueuedItem(index);
+				this.chatService.stopStreaming();
+				// Wait a tick for cancel to propagate, then send
+				setTimeout(() => {
+					this.chatService.sendMessage('', item.blocks);
+				}, 100);
+			}
+		}));
+
 		this._viewDisposables.add(this._header.onNewChat(() => this.chatService.clearMessages()));
 
 		this._viewDisposables.add(this._header.onHistory(() => {
@@ -139,6 +169,14 @@ export class AcpChatViewPane extends ViewPane {
 			if (!s && this._lastGroupComp) {
 				this._lastGroupComp.stopStreaming();
 			}
+		}));
+
+		this._viewDisposables.add(this.chatService.onDidChangeQueue(() => {
+			this._input.setQueuedItems(this.chatService.queuedItems);
+		}));
+
+		this._viewDisposables.add(this.chatService.onDidChangePlan(() => {
+			this._input.setPlanEntries(this.chatService.planEntries as PlanEntry[]);
 		}));
 
 		this._viewDisposables.add(this.chatService.onDidChangeConnectionState(() => {
@@ -246,7 +284,15 @@ export class AcpChatViewPane extends ViewPane {
 			this._lastGroupType = groupType;
 		}
 
-		this._scrollManager.scrollToBottom();
+		this._scheduleScroll();
+	}
+
+	private _scheduleScroll(): void {
+		if (this._scrollTimer) { return; }
+		this._scrollTimer = setTimeout(() => {
+			this._scrollTimer = undefined;
+			this._scrollManager.scrollToBottom();
+		}, 100);
 	}
 
 	private _createGroupComponent(

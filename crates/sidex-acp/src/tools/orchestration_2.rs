@@ -91,14 +91,19 @@ pub async fn send_to_session(params: &Value, ctx: &ToolContext) -> Result<Value,
         // Subscribe to events before prompting so we don't miss chunks
         let mut event_rx = target_session.subscribe();
 
+        let was_busy = target_session.is_prompt_busy().await;
         if let Err(e) = target_session.prompt(summary_blocks).await {
             acp_log!("ERROR", "send_to_session: summary prompt failed: {}", e);
             send_error_callback(&manager, &from_session_id_clone, &to_session_id_clone, &e.to_string()).await;
             return;
         }
+        if was_busy {
+            acp_log!("WARN", "send_to_session: target was busy, summary prompt was queued — event capture may see wrong prompt_complete");
+        }
 
         // Step 3: Capture summary text from events
         let mut summary = String::new();
+        let mut chunk_count = 0u32;
         while let Ok(event) = event_rx.recv().await {
             if let SessionEvent::Update { ref update, .. } = event {
                 match update.get("sessionUpdate").and_then(|v| v.as_str()) {
@@ -108,12 +113,25 @@ pub async fn send_to_session(params: &Value, ctx: &ToolContext) -> Result<Value,
                             .and_then(|t| t.as_str())
                         {
                             summary.push_str(text);
+                            chunk_count += 1;
                         }
                     }
-                    Some("prompt_complete") => break,
+                    Some("prompt_complete") => {
+                        acp_log!(
+                            "INFO",
+                            "send_to_session: event loop broke on prompt_complete ({} chunks, {} bytes)",
+                            chunk_count,
+                            summary.len()
+                        );
+                        break;
+                    }
                     _ => {}
                 }
             }
+        }
+
+        if summary.is_empty() {
+            acp_log!("WARN", "send_to_session: captured empty summary from {}", to_session_id_clone);
         }
 
         // Step 4: Send the summary back to the caller via session/prompt.

@@ -65,6 +65,14 @@ export interface ControlSignal {
 	args?: unknown;
 }
 
+export interface PlanEntry {
+	content: string;
+	status: 'pending' | 'in_progress' | 'completed' | 'failed';
+	taskId?: string;
+	description?: string;
+	assignedTo?: string;
+}
+
 // ─── Store ─────────────────────────────────────────────────────────────────
 
 export interface SessionConfigOption {
@@ -86,6 +94,7 @@ export class AcpStore {
 	private _notifications: AcpNotification[] = [];
 	private _isStreaming: boolean = false;
 	private _queuedItems: QueuedItem[] = [];
+	private _planEntries: PlanEntry[] = [];
 	private _configOptions: SessionConfigOption[] = [];
 
 	private readonly _onDidChangeNotifications = this._registerEmitter<void>();
@@ -102,6 +111,12 @@ export class AcpStore {
 
 	private readonly _onDidChangeConfigOptions = this._registerEmitter<SessionConfigOption[]>();
 	readonly onDidChangeConfigOptions: Event<SessionConfigOption[]> = this._onDidChangeConfigOptions.event;
+
+	private readonly _onDidChangeQueue = this._registerEmitter<void>();
+	readonly onDidChangeQueue: Event<void> = this._onDidChangeQueue.event;
+
+	private readonly _onDidChangePlan = this._registerEmitter<void>();
+	readonly onDidChangePlan: Event<void> = this._onDidChangePlan.event;
 
 	private _unlisteners: (() => void)[] = [];
 	private _eventListenerStarted = false;
@@ -121,6 +136,7 @@ export class AcpStore {
 	get connectionId(): string { return this._connectionId; }
 	get cwd(): string { return this._cwd; }
 	get queuedItems(): QueuedItem[] { return this._queuedItems; }
+	get planEntries(): PlanEntry[] { return this._planEntries; }
 	get configOptions(): SessionConfigOption[] { return this._configOptions; }
 
 	// ─── Lifecycle ─────────────────────────────────────────────────────────
@@ -293,7 +309,7 @@ export class AcpStore {
 				},
 			},
 		};
-		this._notifications = [...this._notifications, userNotification];
+		this._notifications.push(userNotification);
 		this._onDidChangeNotifications.fire();
 
 		try {
@@ -308,10 +324,11 @@ export class AcpStore {
 			this._setStreaming(false);
 			return;
 		}
-		// Safety: if prompt_complete event was missed, clean up
-		if (this._isStreaming) {
-			this._setStreaming(false);
-		}
+		// If the prompt was queued (invoke returned immediately while a turn
+		// was in progress), streaming is still true — leave it that way.
+		// The backend's prompt_state/prompt_complete events are the source of
+		// truth for streaming state. We only clear streaming on error (above)
+		// or when the backend sends prompt_complete.
 	}
 
 	async stopStreaming(): Promise<void> {
@@ -320,6 +337,24 @@ export class AcpStore {
 			request: { session_id: this._sessionId },
 		});
 		this._setStreaming(false);
+	}
+
+	async removeQueuedItem(index: number): Promise<void> {
+		if (!this._sessionId) { return; }
+		await invoke('acp_chat_queue_remove', {
+			request: { session_id: this._sessionId, index },
+		});
+	}
+
+	async clearQueue(): Promise<void> {
+		if (!this._sessionId) { return; }
+		await invoke('acp_chat_queue_clear', {
+			request: { session_id: this._sessionId },
+		});
+	}
+
+	getQueuedItem(index: number): QueuedItem | undefined {
+		return this._queuedItems[index];
 	}
 
 	// ─── Session history ───────────────────────────────────────────────────
@@ -455,6 +490,20 @@ export class AcpStore {
 
 		if (sessionUpdate === 'queue_changed') {
 			this._queuedItems = (update.items as QueuedItem[]) || [];
+			this._onDidChangeQueue.fire();
+			return;
+		}
+
+		if (sessionUpdate === 'plan') {
+			const rawEntries = (update.entries as Array<Record<string, unknown>>) || [];
+			this._planEntries = rawEntries.map(e => ({
+				content: (e.content as string) || '',
+				status: (e.status as PlanEntry['status']) || 'pending',
+				taskId: (e._meta as Record<string, unknown>)?.taskId as string | undefined,
+				description: (e._meta as Record<string, unknown>)?.description as string | undefined,
+				assignedTo: (e._meta as Record<string, unknown>)?.assignedTo as string | undefined,
+			}));
+			this._onDidChangePlan.fire();
 			return;
 		}
 
@@ -512,7 +561,7 @@ export class AcpStore {
 			type: 'session_notification',
 			data: { update },
 		};
-		this._notifications = [...this._notifications, notification];
+		this._notifications.push(notification);
 		this._onDidChangeNotifications.fire();
 	}
 

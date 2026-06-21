@@ -863,6 +863,8 @@ pub fn run() {
             commands::acp_chat_prompt,
             commands::acp_chat_cancel,
             commands::acp_chat_close_session,
+            commands::acp_chat_queue_remove,
+            commands::acp_chat_queue_clear,
             commands::acp_chat_list_sessions,
             commands::acp_chat_set_config_option,
             commands::acp_terminal_output,

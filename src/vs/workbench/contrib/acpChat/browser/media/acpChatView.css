@@ -387,6 +387,7 @@
 	min-height: 0; /* critical for flex child to actually overflow and enable scroll */
 	padding: 16px;
 	position: relative;
+	contain: layout; /* isolate layout from siblings (input area) so streaming updates don't reflow the input */
 }
 
 .sc-messages::-webkit-scrollbar {
@@ -1126,6 +1127,219 @@
 
 .sc-input-area *:focus {
 	outline: none;
+}
+
+/* ===== Queue Items ===== */
+
+/* ===== Plan Panel ===== */
+.sc-plan-panel {
+	display: flex;
+	flex-direction: column;
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.06));
+}
+
+.sc-plan-summary {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	user-select: none;
+	transition: background 0.1s;
+}
+
+.sc-plan-summary:hover {
+	background: var(--vscode-editor-inactiveSelectionBackground, rgba(255, 255, 255, 0.03));
+}
+
+.sc-plan-summary-expanded {
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.06));
+}
+
+.sc-plan-disclosure {
+	font-size: 12px;
+	flex-shrink: 0;
+	opacity: 0.7;
+}
+
+.sc-plan-label {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sc-plan-current {
+	color: var(--vscode-foreground);
+}
+
+.sc-plan-badge {
+	flex-shrink: 0;
+	font-size: 10px;
+	padding: 1px 6px;
+	border-radius: 8px;
+	background: var(--vscode-badge-background, rgba(255, 255, 255, 0.08));
+	color: var(--vscode-badge-foreground, var(--vscode-descriptionForeground));
+}
+
+.sc-plan-entries {
+	max-height: 200px;
+	overflow-y: auto;
+}
+
+.sc-plan-entry {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 10px 4px 26px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.03));
+}
+
+.sc-plan-entry:last-child {
+	border-bottom: none;
+}
+
+.sc-plan-entry-icon {
+	flex-shrink: 0;
+	font-size: 13px;
+}
+
+.sc-plan-in-progress {
+	color: var(--vscode-focusBorder, #007acc);
+	animation: sc-plan-spin 1s linear infinite;
+}
+
+.sc-plan-completed {
+	color: var(--vscode-testing-iconPassed, #73c991);
+}
+
+.sc-plan-failed {
+	color: var(--vscode-errorForeground, #f48771);
+}
+
+.sc-plan-pending {
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.4;
+}
+
+.sc-plan-entry-text {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sc-plan-strikethrough {
+	text-decoration: line-through;
+	opacity: 0.5;
+}
+
+@keyframes sc-plan-spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+/* ===== Queue Items ===== */
+.sc-queue-items {
+	display: flex;
+	flex-direction: column;
+	max-height: 160px;
+	overflow-y: auto;
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.06));
+}
+
+.sc-queue-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.03));
+	transition: background 0.1s;
+}
+
+.sc-queue-item:last-child {
+	border-bottom: none;
+}
+
+.sc-queue-item:hover {
+	background: var(--vscode-editor-inactiveSelectionBackground, rgba(255, 255, 255, 0.03));
+}
+
+.sc-queue-dot {
+	flex-shrink: 0;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--vscode-descriptionForeground);
+	opacity: 0.4;
+}
+
+.sc-queue-next .sc-queue-dot {
+	background: var(--vscode-focusBorder, #007acc);
+	opacity: 1;
+}
+
+.sc-queue-text {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sc-queue-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	flex-shrink: 0;
+	opacity: 0;
+	transition: opacity 0.1s;
+}
+
+.sc-queue-item:hover .sc-queue-actions,
+.sc-queue-next .sc-queue-actions {
+	opacity: 1;
+}
+
+.sc-queue-btn {
+	background: none;
+	border: none;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	padding: 3px;
+	border-radius: 4px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 13px;
+}
+
+.sc-queue-btn:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.08));
+	color: var(--vscode-foreground);
+}
+
+.sc-queue-send-now {
+	background: none;
+	border: 1px solid var(--vscode-button-border, rgba(255, 255, 255, 0.15));
+	color: var(--vscode-foreground);
+	cursor: pointer;
+	font-size: 11px;
+	padding: 2px 8px;
+	border-radius: 4px;
+	white-space: nowrap;
+	margin-left: 4px;
+}
+
+.sc-queue-send-now:hover {
+	background: var(--vscode-button-background, #0e639c);
+	border-color: var(--vscode-button-background, #0e639c);
+	color: var(--vscode-button-foreground, #fff);
 }
 
 .sc-input-container {

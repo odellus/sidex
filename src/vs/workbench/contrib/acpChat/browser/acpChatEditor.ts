@@ -28,6 +28,7 @@ import { ScrollManager } from './scrollManager.js';
 import { AcpChatSessionManager } from './acpChatSessionManager.js';
 import { ChatHeader } from './components/toolbar/chatHeader.js';
 import { ChatInput } from './components/input/chatInput.js';
+import type { PlanEntry } from './components/input/chatInput.js';
 import { UserMessage } from './components/messages/userMessage.js';
 import { ThinkingBlock } from './components/messages/thinkingBlock.js';
 import { AgentMessageGroup } from './components/messages/agentMessage.js';
@@ -239,6 +240,25 @@ export class AcpChatEditor extends EditorPane {
 			})
 		);
 		this._sessionDisposables.add(this._chatInput.onStop(() => store.stopStreaming()));
+		this._sessionDisposables.add(this._chatInput.onRemoveQueuedItem(index => store.removeQueuedItem(index)));
+		this._sessionDisposables.add(this._chatInput.onClearQueue(() => store.clearQueue()));
+		this._sessionDisposables.add(this._chatInput.onEditQueuedItem(index => {
+			const item = store.getQueuedItem(index);
+			if (item) {
+				store.removeQueuedItem(index);
+				this._chatInput.loadTextIntoEditor(item.text);
+			}
+		}));
+		this._sessionDisposables.add(this._chatInput.onSendQueuedItemNow(index => {
+			const item = store.getQueuedItem(index);
+			if (item) {
+				store.removeQueuedItem(index);
+				store.stopStreaming();
+				setTimeout(() => {
+					store.sendMessage('', item.blocks);
+				}, 100);
+			}
+		}));
 
 		this._sessionDisposables.add(this._header.onNewChat(() => store.clearMessages()));
 		this._sessionDisposables.add(
@@ -272,6 +292,16 @@ export class AcpChatEditor extends EditorPane {
 				if (!s && this._lastGroupComp) {
 					this._lastGroupComp.stopStreaming();
 				}
+			})
+		);
+		this._sessionDisposables.add(
+			store.onDidChangeQueue(() => {
+				this._chatInput.setQueuedItems(store.queuedItems);
+			})
+		);
+		this._sessionDisposables.add(
+			store.onDidChangePlan(() => {
+				this._chatInput.setPlanEntries(store.planEntries as PlanEntry[]);
 			})
 		);
 		this._sessionDisposables.add(

@@ -320,6 +320,9 @@ pub async fn acp_chat_switch_session(
             e.to_string()
         })?;
 
+    // Set manager reference so orchestration tools can access other sessions
+    session.set_manager(state.session_manager.clone()).await;
+
     Ok(NewSessionResponse {
         session_id: session.session_id(),
         config_options: session.config_options(),
@@ -385,6 +388,44 @@ pub async fn acp_chat_close_session(
         .close_session(&request.session_id)
         .await;
     Ok(())
+}
+
+/// Remove a queued prompt by index.
+#[tauri::command]
+pub async fn acp_chat_queue_remove(
+    state: State<'_, Arc<AcpChatState>>,
+    request: QueueRemoveRequest,
+) -> Result<(), String> {
+    let session = state
+        .session_manager
+        .get_session(&request.session_id)
+        .await
+        .ok_or("Session not found")?;
+
+    session.queue_remove(request.index).await.ok_or("Index out of range")?;
+    Ok(())
+}
+
+/// Clear the entire prompt queue.
+#[tauri::command]
+pub async fn acp_chat_queue_clear(
+    state: State<'_, Arc<AcpChatState>>,
+    request: SessionIdRequest,
+) -> Result<(), String> {
+    let session = state
+        .session_manager
+        .get_session(&request.session_id)
+        .await
+        .ok_or("Session not found")?;
+
+    session.queue_clear().await;
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QueueRemoveRequest {
+    pub session_id: String,
+    pub index: usize,
 }
 
 /// List agent-managed sessions for a cwd.

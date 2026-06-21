@@ -659,6 +659,45 @@ impl AcpSession {
         });
     }
 
+    /// Broadcast the current prompt queue state to the frontend.
+    /// Called whenever items are added, removed, or cleared.
+    pub(crate) async fn broadcast_queue_state(&self) {
+        let items: Vec<serde_json::Value> = {
+            let q = self.queue.lock().await;
+            q.iter().enumerate().map(|(i, item)| {
+                let (text, blocks) = match item {
+                    QueueItem::Prompt(blocks) => {
+                        let text: String = blocks.iter()
+                            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        (text, blocks.clone())
+                    }
+                    QueueItem::Task(task) => {
+                        (task.title.clone(), vec![serde_json::json!({
+                            "type": "text",
+                            "text": task.title,
+                        })])
+                    }
+                };
+                serde_json::json!({
+                    "id": format!("q-{}", i),
+                    "text": text,
+                    "blocks": blocks,
+                })
+            }).collect()
+        };
+
+        let update = serde_json::json!({
+            "sessionUpdate": "queue_changed",
+            "items": items,
+        });
+        let _ = self.events_tx.send(SessionEvent::Update {
+            session_id: self.session_id(),
+            update,
+        });
+    }
+
     /// Send a custom extension notification to the agent process.
     /// Used for orchestration callbacks (e.g., _send notifications).
     /// Extension methods start with _ and can contain any payload.
