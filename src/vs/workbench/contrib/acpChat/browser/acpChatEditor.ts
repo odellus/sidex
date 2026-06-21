@@ -63,6 +63,9 @@ interface SessionView {
 	groupComponents: GroupComponent[];
 	lastGroupType: string | null;
 	lastGroupComp: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup | null;
+	/** How many notifications were rendered when this view was saved.
+	 *  On restore, notifications past this index are replayed to catch up. */
+	renderedCount: number;
 }
 
 export class AcpChatEditor extends EditorPane {
@@ -154,6 +157,27 @@ export class AcpChatEditor extends EditorPane {
 
 		this._bindEvents();
 
+		// Catch up on notifications that arrived while this tab was hidden.
+		// The store kept receiving Tauri events, but the view's listener was
+		// disposed — so notifications accumulated unrendered. Replay them now.
+		// Must come after _bindEvents() since that clears _sessionDisposables
+		// (catch-up adds components to _groupComponents, not _sessionDisposables).
+		const renderedSoFar = savedView ? savedView.renderedCount : 0;
+		this._catchUpNotifications(renderedSoFar);
+
+		// Sync live state — streaming, queue, plan may have changed while away
+		this._chatInput.setStreaming(this._acpStore.isStreaming);
+		this._chatInput.setQueuedItems(this._acpStore.queuedItems);
+		this._chatInput.setPlanEntries(this._acpStore.planEntries as PlanEntry[]);
+		if (!this._acpStore.isStreaming && this._lastGroupComp) {
+			this._lastGroupComp.stopStreaming();
+		}
+
+		// Scroll to bottom when returning to a previously viewed tab
+		if (savedView) {
+			this._scrollManager.forceScrollToBottom();
+		}
+
 		// Connect to agent if not already connected
 		if (this._acpStore.connectionStatus === 'disconnected') {
 			await this._connect();
@@ -164,6 +188,11 @@ export class AcpChatEditor extends EditorPane {
 	}
 
 	override clearInput(): void {
+		// Save and detach DOM before clearing references — VS Code may call
+		// clearInput() before setInput() when switching editor tabs.
+		if (this._currentSessionId && this._messagesEl) {
+			this._saveCurrentView();
+		}
 		super.clearInput();
 		this._sessionDisposables.clear();
 		this._acpStore = undefined;
@@ -188,7 +217,8 @@ export class AcpChatEditor extends EditorPane {
 			chatInput: this._chatInput,
 			groupComponents: this._groupComponents,
 			lastGroupType: this._lastGroupType,
-			lastGroupComp: this._lastGroupComp
+			lastGroupComp: this._lastGroupComp,
+			renderedCount: this._acpStore?.notifications.length ?? 0,
 		});
 	}
 
@@ -237,6 +267,7 @@ export class AcpChatEditor extends EditorPane {
 		this._sessionDisposables.add(
 			this._chatInput.onSendBlocks(blocks => {
 				store.sendMessage('', blocks);
+				this._scrollManager.forceScrollToBottom();
 			})
 		);
 		this._sessionDisposables.add(this._chatInput.onStop(() => store.stopStreaming()));
@@ -256,6 +287,7 @@ export class AcpChatEditor extends EditorPane {
 				store.stopStreaming();
 				setTimeout(() => {
 					store.sendMessage('', item.blocks);
+					this._scrollManager.forceScrollToBottom();
 				}, 100);
 			}
 		}));
@@ -472,11 +504,12 @@ export class AcpChatEditor extends EditorPane {
 
 	// ── Rendering ──
 
-	private _onNotificationAdded(): void {
+	private _heavyScrollTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** Replay notifications that arrived while this tab was hidden. */
+	private _catchUpNotifications(fromIndex: number): void {
 		const store = this._acpStore;
-		if (!store || !this._messagesEl) {
-			return;
-		}
+		if (!store || !this._messagesEl) { return; }
 
 		const notifications = store.notifications;
 		this._welcomeEl.style.display = notifications.length > 0 ? 'none' : 'flex';
@@ -486,7 +519,44 @@ export class AcpChatEditor extends EditorPane {
 			return;
 		}
 
-		const notification = notifications[notifications.length - 1];
+		// Store was cleared while we were away — start fresh
+		if (notifications.length < fromIndex) {
+			this._resetView();
+			fromIndex = 0;
+		}
+
+		for (let i = fromIndex; i < notifications.length; i++) {
+			this._renderNotification(notifications[i]);
+		}
+	}
+
+	private _onNotificationAdded(): void {
+		const store = this._acpStore;
+		if (!store || !this._messagesEl) { return; }
+
+		const notifications = store.notifications;
+		this._welcomeEl.style.display = notifications.length > 0 ? 'none' : 'flex';
+
+		if (notifications.length === 0) {
+			this._resetView();
+			return;
+		}
+
+		this._renderNotification(notifications[notifications.length - 1]);
+
+		// Scroll after the browser has laid out the new content
+		requestAnimationFrame(() => this._scrollManager.scrollToBottom());
+
+		// Also scroll after heavy render (mermaid SVGs render 250ms after text)
+		if (this._heavyScrollTimer) { clearTimeout(this._heavyScrollTimer); }
+		this._heavyScrollTimer = setTimeout(() => {
+			this._heavyScrollTimer = undefined;
+			this._scrollManager.scrollToBottom();
+		}, 350);
+	}
+
+	/** Render a single notification into the current view (grouping logic). */
+	private _renderNotification(notification: AcpNotification): void {
 		const update = notification.data.update;
 		const sessionUpdate = update.sessionUpdate as string;
 
@@ -504,13 +574,10 @@ export class AcpChatEditor extends EditorPane {
 			wrapper.classList.add('sc-message-group');
 			this._messagesEl.insertBefore(wrapper, this._sentinelEl);
 			comp.appendTo(wrapper);
-			this._sessionDisposables.add(comp);
 			this._groupComponents.push({ type: groupType, component: comp });
 			this._lastGroupComp = comp;
 			this._lastGroupType = groupType;
 		}
-
-		this._scrollManager.scrollToBottom();
 	}
 
 	private _createGroupComponent(

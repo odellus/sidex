@@ -60,15 +60,18 @@ async fn capture_shell_env(cache: &mut ShellEnvCache) {
     // interactive `-i` flag: interactive shells run .bashrc interactive-only
     // blocks that can block indefinitely in headless contexts (waiting on a
     // `read`, a TTY, etc.). To still pick up PATH setup that lives in
-    // ~/.bashrc (fnm/nvm/uv init), we explicitly source it from a
-    // non-interactive login shell.
+    // ~/.bashrc (fnm/nvm/uv init), we source it from a non-interactive
+    // login shell — BUT .bashrc typically has an early `case $- in *i*) ;;
+    // *) return;; esac` guard that makes it return immediately when
+    // non-interactive. We strip that guard with sed before evaluating,
+    // so the fnm/nvm/uv PATH setup (which lives after the guard) still runs.
     let home = std::env::var("HOME").unwrap_or_default();
     let bashrc = format!("{}/.bashrc", home);
     let strategies: Vec<(&str, String)> = match shell_name {
         "bash" | "sh" => vec![
+            ("-lc", format!("eval \"$(sed '/^case \\$- in/,/^esac$/d' {} 2>/dev/null)\"; env -0", bashrc)),
             ("-lc", format!("source {} 2>/dev/null; env -0", bashrc)),
             ("-lc", "env -0".to_string()),
-            ("-c", "env -0".to_string()),
         ],
         "zsh" => vec![
             ("-lc", "env -0".to_string()),

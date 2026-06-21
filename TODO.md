@@ -9,23 +9,12 @@
 - [x] Syntax highlighting during streaming — frozen-block strategy in `streamingMarkdown.ts` uses highlight.js (not Monaco). See wiki §11–12.
 - [x] Cancellation kills running terminals — `cancel_prompt()` in `prompt_2.rs` kills all `active_terminals` + sends `session/cancel`
 - [ ] Per-terminal cancel button — cancel just the terminal command, not the whole react loop
-- [ ] Messages sent to chat do not appear fully rendered, you only see the top of them and focus only moves to bottom as text streams in. focs needs to be on the bottom of the message that was sent
+- [ ] Messages sent to chat do not appear fully rendered, you only see the top of them and focus only moves to bottom as text streams in. focus needs to be on the bottom of the message that was sent
 
 ### Rich Text Editor
 
-- [ ] URI schema so the rich text editor can be split into its own window
-- [ ] Experiment with seps on a document
 - [ ] Enable scroll wheel in rich text editor
-- [ ] Resizing rich text editor (less important if splittable into another window)
-- [ ] Typst syntax highlighting (WYSIWYG?) + `@` context mechanism in the rich text editor
-- [ ] When message is sent it shows up as bubble in chat
 - [ ] Highlighting context and adding to rich text editor — most crucial item
-- [ ] Persistent document with seps where agent responses are linked — longer term vision
-- [ ] Rich text editor should be "monaco++"
-- [ ] Full typst syntax highlighting
-- [ ] Save drafts — persistent session/prompt input across reloads
-- [ ] Local model autocomplete (like zed's)
-
 ### Tools
 
 - [x] ~~Add diff fixtures for edit and write~~
@@ -45,12 +34,11 @@
   - [ ] Editor/view for the normal prompt queue
   - [ ] Editor/view for the task/todo list (instructor/orchestrator/worker iterate over)
 
-- [ ] **DO NOT SHOW `...` WHEN COMMAND OVERRUNS — SHOW THE WHOLE THING**
+- [x] **DO NOT SHOW `...` WHEN COMMAND OVERRUNS — SHOW THE WHOLE THING**
 
 ## IDE specific
 
 - [x] ~~Rebrand to Crow with crow logo~~
-- [ ] Bring tinymist into contrib; default `.typ` view (enable for markdown too)
 - [x] ~~Add scroll to terminal~~
 - [x] ~~Autosurround: highlighting text + adding quotes/parens surrounds instead of replacing~~
 - [x] ~~GitHub workflow for release builds~~
@@ -60,7 +48,14 @@
 - [x] ~~Add `` ` `` to typst LSP autoclose/autosurround characters~~
 - [ ] Make preview robust to editor size changes (CSS). Current resizing violates VS Code component constraints.
 - [ ] Keep editors in sync with backend — agent edits, other editors, anything. Add dirty indicator when there's a difference.
+- [ ] Fix issue with remote explorer not connecting via SSH
+  ```
+  state not managed for field `store` on command `remote_connect_ssh`. You must call `.manage()` before using this command
+  ```
 
 ## CROW-CLI SPECIFIC CHANGES
 
 - [ ] Make modifying crow-cli and crow-mcp the core use case of this IDE?
+- [ ] Add `last-content` method to query_memory for inter-agent communication to replace summarization prompt
+
+## BUGS

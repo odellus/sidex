@@ -172,7 +172,7 @@ pub async fn remote_connect_ssh(
     user: String,
     port: Option<u16>,
     auth: SshAuthPayload,
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<RemoteConnectionEntry, String> {
     let port = port.unwrap_or(22);
     let auth: SshAuth = auth.into();
@@ -195,7 +195,7 @@ pub async fn remote_connect_ssh(
 pub async fn remote_exec_ssh(
     connection_id: u64,
     command: String,
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<RemoteExecResult, String> {
     let mgr = store.inner.lock().await;
     let transport = mgr
@@ -307,7 +307,7 @@ pub async fn remote_codespaces_list(github_token: String) -> Result<Vec<Codespac
 #[tauri::command]
 pub async fn remote_connect_wsl(
     distro: String,
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<RemoteConnectionEntry, String> {
     let mut mgr = store.inner.lock().await;
     let id = mgr
@@ -325,7 +325,7 @@ pub async fn remote_connect_wsl(
 #[tauri::command]
 pub async fn remote_connect_container(
     config_path: String,
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<RemoteConnectionEntry, String> {
     let path = PathBuf::from(config_path);
     let mut mgr = store.inner.lock().await;
@@ -345,7 +345,7 @@ pub async fn remote_connect_container(
 pub async fn remote_connect_codespace(
     name: String,
     github_token: String,
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<RemoteConnectionEntry, String> {
     let mut mgr = store.inner.lock().await;
     let id = mgr
@@ -363,7 +363,7 @@ pub async fn remote_connect_codespace(
 #[tauri::command]
 pub async fn remote_disconnect(
     connection_id: u64,
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<(), String> {
     let mut mgr = store.inner.lock().await;
     mgr.disconnect(ConnectionId(connection_id))
@@ -373,7 +373,7 @@ pub async fn remote_disconnect(
 
 #[tauri::command]
 pub async fn remote_active_connections(
-    store: State<'_, RemoteManagerStore>,
+    store: State<'_, Arc<RemoteManagerStore>>,
 ) -> Result<Vec<RemoteConnectionEntry>, String> {
     let mgr = store.inner.lock().await;
     Ok(mgr.active_connections().into_iter().map(to_entry).collect())

@@ -116,6 +116,7 @@ export class AcpChatViewPane extends ViewPane {
 	private _bindEvents(): void {
 		this._viewDisposables.add(this._input.onSendBlocks(blocks => {
 			this.chatService.sendMessage('', blocks);
+			this._scrollManager.forceScrollToBottom();
 		}));
 		this._viewDisposables.add(this._input.onStop(() => this.chatService.stopStreaming()));
 		this._viewDisposables.add(this._input.onAgentChange(agentName => this.chatService.switchAgent(agentName)));
@@ -137,6 +138,7 @@ export class AcpChatViewPane extends ViewPane {
 				// Wait a tick for cancel to propagate, then send
 				setTimeout(() => {
 					this.chatService.sendMessage('', item.blocks);
+					this._scrollManager.forceScrollToBottom();
 				}, 100);
 			}
 		}));
@@ -285,6 +287,7 @@ export class AcpChatViewPane extends ViewPane {
 		}
 
 		this._scheduleScroll();
+		this._scheduleHeavyScroll();
 	}
 
 	private _scheduleScroll(): void {
@@ -293,6 +296,16 @@ export class AcpChatViewPane extends ViewPane {
 			this._scrollTimer = undefined;
 			this._scrollManager.scrollToBottom();
 		}, 100);
+	}
+
+	private _heavyScrollTimer: ReturnType<typeof setTimeout> | undefined;
+
+	private _scheduleHeavyScroll(): void {
+		if (this._heavyScrollTimer) { clearTimeout(this._heavyScrollTimer); }
+		this._heavyScrollTimer = setTimeout(() => {
+			this._heavyScrollTimer = undefined;
+			this._scrollManager.scrollToBottom();
+		}, 350);
 	}
 
 	private _createGroupComponent(

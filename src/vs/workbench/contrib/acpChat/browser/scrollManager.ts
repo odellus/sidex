@@ -15,7 +15,6 @@ import * as DOM from '../../../../base/browser/dom.js';
 export class ScrollManager extends Disposable {
 
 	private _userScrolledUp = false;
-	private _isProgrammaticScroll = false;
 	private readonly _threshold = 40;
 
 	private readonly _onUserScrollUp = this._register(new Emitter<void>());
@@ -65,11 +64,6 @@ export class ScrollManager extends Disposable {
 	}
 
 	private _handleScroll(): void {
-		if (this._isProgrammaticScroll) {
-			this._isProgrammaticScroll = false;
-			return;
-		}
-
 		const el = this._messagesEl;
 		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= this._threshold;
 
@@ -85,22 +79,19 @@ export class ScrollManager extends Disposable {
 	/** Scroll to bottom only if user hasn't scrolled up. */
 	scrollToBottom(): void {
 		if (!this._userScrolledUp) {
-			this._isProgrammaticScroll = true;
-			this._sentinelEl.scrollIntoView({ behavior: 'instant' });
+			this._messagesEl.scrollTop = this._messagesEl.scrollHeight;
 		}
 	}
 
-	/** Force scroll to bottom regardless of user scroll state (e.g. "Jump" button click). */
+	/** Force scroll to bottom regardless of user scroll state (e.g. on send, tab return). */
 	forceScrollToBottom(): void {
 		this._userScrolledUp = false;
-		this._isProgrammaticScroll = true;
-		this._sentinelEl.scrollIntoView({ behavior: 'instant' });
+		this._messagesEl.scrollTop = this._messagesEl.scrollHeight;
 		this._onUserScrollDown.fire();
 	}
 
 	/** Reset scroll state (e.g. when messages are cleared). */
 	reset(): void {
 		this._userScrolledUp = false;
-		this._isProgrammaticScroll = false;
 	}
 }
