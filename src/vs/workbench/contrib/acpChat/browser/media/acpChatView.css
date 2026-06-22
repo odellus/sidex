@@ -384,7 +384,7 @@
 	flex: 1;
 	overflow-y: auto;
 	overflow-x: hidden;
-	overflow-anchor: none; /* JS handles auto-scroll; CSS anchoring conflicts with it */
+	overflow-anchor: none; /* JS (ResizeObserver) handles auto-scroll */
 	min-height: 0; /* critical for flex child to actually overflow and enable scroll */
 	padding: 16px;
 	position: relative;

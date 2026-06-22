@@ -97,9 +97,10 @@ export class StreamingMarkdownRenderer {
 		this._heavyTimer = setTimeout(() => {
 			this._heavyTimer = undefined;
 			renderMermaidDiagrams(this._container).then(() => {
-				// Mermaid SVGs are now in the DOM — dispatch after layout
+				// Mermaid SVGs are now in the DOM — dispatch after layout.
+				// bubbles: true so the event reaches the listener on .sc-messages.
 				requestAnimationFrame(() => {
-					this._container.dispatchEvent(new CustomEvent('sc:heavy-render-done'));
+					this._container.dispatchEvent(new CustomEvent('sc:heavy-render-done', { bubbles: true }));
 				});
 			});
 		}, 250);

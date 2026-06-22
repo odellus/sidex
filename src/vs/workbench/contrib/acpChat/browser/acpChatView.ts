@@ -45,14 +45,6 @@ export class AcpChatViewPane extends ViewPane {
 	private _connectingBar!: HTMLElement;
 	private readonly _viewDisposables = this._register(new DisposableStore());
 
-	// Throttle scroll during streaming. scrollToBottom() forces a synchronous
-	// layout reflow (scrollIntoView), so calling it on every token chunk
-	// starves the main thread — especially when the user is typing in the
-	// input box at the same time. We debounce to ~100ms so it only fires
-	// once per batch of chunks, decoupling scroll from the raw notification
-	// rate.
-	private _scrollTimer: ReturnType<typeof setTimeout> | undefined;
-
 	// Group-based rendering state
 	private _groupComponents: GroupComponent[] = [];
 	private _lastGroupType: string | null = null;
@@ -290,15 +282,7 @@ export class AcpChatViewPane extends ViewPane {
 			this._lastGroupType = groupType;
 		}
 
-		this._scheduleScroll();
-	}
-
-	private _scheduleScroll(): void {
-		if (this._scrollTimer) { return; }
-		this._scrollTimer = setTimeout(() => {
-			this._scrollTimer = undefined;
-			this._scrollManager.scrollToBottom();
-		}, 100);
+		requestAnimationFrame(() => this._scrollManager.scrollToBottom());
 	}
 
 	private _createGroupComponent(

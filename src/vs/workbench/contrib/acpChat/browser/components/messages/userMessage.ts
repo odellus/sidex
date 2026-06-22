@@ -42,6 +42,7 @@ export class UserMessage extends Component {
 		}
 
 		this._mdRenderer.update(text);
+		this._mdRenderer.flush();
 	}
 
 	stopStreaming(): void {
