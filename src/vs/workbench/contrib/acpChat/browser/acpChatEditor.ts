@@ -173,9 +173,12 @@ export class AcpChatEditor extends EditorPane {
 			this._lastGroupComp.stopStreaming();
 		}
 
-		// Scroll to bottom when returning to a previously viewed tab
+		// Scroll to bottom when returning to a previously viewed tab.
+		// Wrapped in rAF because _restoreView() re-attaches DOM elements and
+		// _catchUpNotifications() may render new content — the browser needs a
+		// layout pass before scrollHeight is correct.
 		if (savedView) {
-			this._scrollManager.forceScrollToBottom();
+			requestAnimationFrame(() => this._scrollManager.forceScrollToBottom());
 		}
 
 		// Connect to agent if not already connected

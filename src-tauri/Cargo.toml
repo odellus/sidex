@@ -1,6 +1,6 @@
 [package]
 name = "crow"
-version = "0.1.11"
+version = "0.1.12"
 description = "Crow - A fast, open-source code editor"
 authors = ["Siden Technologies Inc"]
 license = "MIT"
