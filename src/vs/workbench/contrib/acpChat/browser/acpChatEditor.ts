@@ -318,6 +318,10 @@ export class AcpChatEditor extends EditorPane {
 		);
 
 		this._sessionDisposables.add(store.onDidChangeNotifications(() => this._onNotificationAdded()));
+		this._sessionDisposables.add(dom.addDisposableListener(
+			this._messagesEl, 'sc:heavy-render-done' as any,
+			() => this._scrollManager.scrollToBottom()
+		));
 		this._sessionDisposables.add(
 			store.onDidChangeStreaming(s => {
 				this._chatInput.setStreaming(s);
@@ -504,8 +508,6 @@ export class AcpChatEditor extends EditorPane {
 
 	// ── Rendering ──
 
-	private _heavyScrollTimer: ReturnType<typeof setTimeout> | undefined;
-
 	/** Replay notifications that arrived while this tab was hidden. */
 	private _catchUpNotifications(fromIndex: number): void {
 		const store = this._acpStore;
@@ -547,12 +549,8 @@ export class AcpChatEditor extends EditorPane {
 		// Scroll after the browser has laid out the new content
 		requestAnimationFrame(() => this._scrollManager.scrollToBottom());
 
-		// Also scroll after heavy render (mermaid SVGs render 250ms after text)
-		if (this._heavyScrollTimer) { clearTimeout(this._heavyScrollTimer); }
-		this._heavyScrollTimer = setTimeout(() => {
-			this._heavyScrollTimer = undefined;
-			this._scrollManager.scrollToBottom();
-		}, 350);
+		// Mermaid scroll is handled by the 'sc:heavy-render-done' event listener
+		// in _bindEvents() — fires when async mermaid.run() actually completes
 	}
 
 	/** Render a single notification into the current view (grouping logic). */

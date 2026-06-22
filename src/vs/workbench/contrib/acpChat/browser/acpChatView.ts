@@ -166,6 +166,10 @@ export class AcpChatViewPane extends ViewPane {
 		}));
 
 		this._viewDisposables.add(this.chatService.onDidChangeNotifications(() => this._onNotificationAdded()));
+		this._viewDisposables.add(DOM.addDisposableListener(
+			this._messagesEl, 'sc:heavy-render-done' as any,
+			() => this._scrollManager.scrollToBottom()
+		));
 		this._viewDisposables.add(this.chatService.onDidChangeStreaming(s => {
 			this._input.setStreaming(s);
 			if (!s && this._lastGroupComp) {
@@ -287,7 +291,6 @@ export class AcpChatViewPane extends ViewPane {
 		}
 
 		this._scheduleScroll();
-		this._scheduleHeavyScroll();
 	}
 
 	private _scheduleScroll(): void {
@@ -296,16 +299,6 @@ export class AcpChatViewPane extends ViewPane {
 			this._scrollTimer = undefined;
 			this._scrollManager.scrollToBottom();
 		}, 100);
-	}
-
-	private _heavyScrollTimer: ReturnType<typeof setTimeout> | undefined;
-
-	private _scheduleHeavyScroll(): void {
-		if (this._heavyScrollTimer) { clearTimeout(this._heavyScrollTimer); }
-		this._heavyScrollTimer = setTimeout(() => {
-			this._heavyScrollTimer = undefined;
-			this._scrollManager.scrollToBottom();
-		}, 350);
 	}
 
 	private _createGroupComponent(
