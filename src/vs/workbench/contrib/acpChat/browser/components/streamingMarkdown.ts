@@ -31,6 +31,9 @@ export class StreamingMarkdownRenderer {
 	private _heavyTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly _renderInterval = 80;
 	private _clickHandler: ((e: MouseEvent) => void) | undefined;
+	// Serializes mermaid.run — it mutates global mermaid state, so concurrent
+	// calls on different nodes can corrupt each other.
+	private _mermaidRendering = false;
 
 	constructor(container: HTMLElement) {
 		this._container = container;
@@ -83,6 +86,7 @@ export class StreamingMarkdownRenderer {
 			this._frozenBoundary = this._text.length;
 		}
 		this._activeEl.innerHTML = '';
+		this._renderMermaidInFrozen();
 		this._scheduleHeavyRender();
 	}
 
@@ -109,6 +113,12 @@ export class StreamingMarkdownRenderer {
 			this._frozenEl.insertAdjacentHTML('beforeend', renderMarkdown(newlyFrozen));
 			this._frozenFenceCount += (newlyFrozen.match(/```/g) || []).length;
 			this._frozenBoundary = boundary;
+			// A complete mermaid block was just committed to the stable (append-only)
+			// frozen region. Render it now instead of waiting for the end-of-stream
+			// heavy timer, which is reset on every tick and never fires mid-stream.
+			if (/```mermaid\b/.test(newlyFrozen)) {
+				this._renderMermaidInFrozen();
+			}
 		}
 		this._activeEl.innerHTML = renderMarkdown(this._text.slice(this._frozenBoundary));
 		this._scheduleHeavyRender();
@@ -118,7 +128,13 @@ export class StreamingMarkdownRenderer {
 		if (this._heavyTimer) { clearTimeout(this._heavyTimer); }
 		this._heavyTimer = setTimeout(() => {
 			this._heavyTimer = undefined;
-			renderMermaidDiagrams(this._container).then(() => {
+			// Scope to the frozen region only: the active region holds blocks still
+			// being streamed (possibly incomplete mermaid). Rendering those mid-pause
+			// causes flicker — mermaid parses a half-streamed diagram, then the next
+			// tick wipes activeEl and recreates it raw. Only frozen (complete) blocks
+			// are safe to render. After flush() the active region is empty, so this
+			// still covers the end-of-stream case.
+			renderMermaidDiagrams(this._frozenEl).then(() => {
 				// Mermaid SVGs are now in the DOM — dispatch after layout.
 				// bubbles: true so the event reaches the listener on .sc-messages.
 				requestAnimationFrame(() => {
@@ -126,6 +142,29 @@ export class StreamingMarkdownRenderer {
 				});
 			});
 		}, 250);
+	}
+
+	/**
+	 * Render mermaid diagrams committed to the frozen region. Frozen content is
+	 * append-only (never wiped by re-render), so it's safe to render mermaid
+	 * there mid-stream. The active region is replaced every tick, so mermaid
+	 * there would be destroyed — it must wait until frozen. Guarded because
+	 * mermaid.run mutates global mermaid state; the completion recheck picks
+	 * up any blocks that froze while a render was in flight.
+	 */
+	private _renderMermaidInFrozen(): void {
+		if (this._mermaidRendering) { return; }
+		if (!this._frozenEl.querySelector('.mermaid:not([data-processed])')) { return; }
+		this._mermaidRendering = true;
+		renderMermaidDiagrams(this._frozenEl).then(() => {
+			this._mermaidRendering = false;
+			requestAnimationFrame(() => {
+				this._container.dispatchEvent(new CustomEvent('sc:heavy-render-done', { bubbles: true }));
+			});
+			if (this._frozenEl.querySelector('.mermaid:not([data-processed])')) {
+				this._renderMermaidInFrozen();
+			}
+		});
 	}
 
 	/**
