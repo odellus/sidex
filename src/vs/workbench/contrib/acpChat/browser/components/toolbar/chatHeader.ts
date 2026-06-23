@@ -96,6 +96,12 @@ export class ChatHeader extends Component {
 		histSearch.type = 'text';
 		this.on(histSearch, 'input', () => this._filterHistory(histSearch.value));
 		this._historyList = DOM.append(this._historyPanel, $('div.sc-history-list'));
+		// Stop the wheel from bubbling to the ViewPane body's DomScrollableElement,
+		// which would preventDefault() and kill native overflow scroll on this list.
+		// Same fix the model menu uses (chatInput.ts).
+		this.on(this._historyList, 'wheel', (e) => {
+			e.stopPropagation();
+		});
 
 		// Menu dropdown panel
 		this._menuPanel = this.append('div', 'sc-menu-panel');
