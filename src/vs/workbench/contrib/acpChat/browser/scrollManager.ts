@@ -47,24 +47,19 @@ export class ScrollManager extends Disposable {
 			const el = this._messagesEl;
 			const hasScrollableContent = el.scrollHeight > el.clientHeight;
 			if (!hasScrollableContent) {
-				return; // nothing to scroll, let parent handle it
+				return;
 			}
 			const atTop = el.scrollTop <= 0;
 			const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
 			const scrollingUp = e.deltaY < 0;
 			const scrollingDown = e.deltaY > 0;
-			// Only handle when scrolling would actually scroll this container.
-			// If user is at top scrolling up, or at bottom scrolling down, let parent handle it.
 			if ((scrollingUp && !atTop) || (scrollingDown && !atBottom)) {
-				// Manually scroll since parent handlers would preventDefault() native scroll
 				const newScrollTop = el.scrollTop + e.deltaY;
 				el.scrollTop = Math.max(0, Math.min(newScrollTop, el.scrollHeight - el.clientHeight));
-
-				// Prevent the event from reaching parent handlers
 				e.preventDefault();
 				e.stopPropagation();
 			}
-		}, true)); // true = use capture phase to run before parent handlers
+		}, true));
 
 		// ResizeObserver: detect when content inside .sc-messages grows.
 		// This fires for any height change — streaming text, mermaid SVG

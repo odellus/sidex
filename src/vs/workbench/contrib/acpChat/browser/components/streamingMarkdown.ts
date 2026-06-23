@@ -30,6 +30,7 @@ export class StreamingMarkdownRenderer {
 	private _renderTimer: ReturnType<typeof setTimeout> | undefined;
 	private _heavyTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly _renderInterval = 80;
+	private _clickHandler: ((e: MouseEvent) => void) | undefined;
 
 	constructor(container: HTMLElement) {
 		this._container = container;
@@ -39,6 +40,26 @@ export class StreamingMarkdownRenderer {
 		this._activeEl.className = 'sc-md-active';
 		this._container.appendChild(this._frozenEl);
 		this._container.appendChild(this._activeEl);
+
+		// Event delegation for copy buttons on code blocks.
+		// The buttons are injected via innerHTML/insertAdjacentHTML so we
+		// can't attach listeners individually — one delegated listener
+		// on the container catches all clicks.
+		this._clickHandler = (e: MouseEvent) => {
+			const btn = (e.target as HTMLElement).closest('.sc-code-copy-btn');
+			if (!btn) { return; }
+			const codeBlock = btn.closest('.sc-code-block');
+			const code = codeBlock?.querySelector('code');
+			if (!code) { return; }
+			navigator.clipboard.writeText(code.textContent || '').then(() => {
+				const icon = btn.querySelector('.codicon');
+				if (icon) {
+					icon.className = 'codicon codicon-check';
+					setTimeout(() => { icon.className = 'codicon codicon-copy'; }, 1500);
+				}
+			}).catch(() => { /* */ });
+		};
+		this._container.addEventListener('click', this._clickHandler);
 	}
 
 	get text(): string { return this._text; }
@@ -68,6 +89,7 @@ export class StreamingMarkdownRenderer {
 	dispose(): void {
 		if (this._renderTimer) { clearTimeout(this._renderTimer); }
 		if (this._heavyTimer) { clearTimeout(this._heavyTimer); }
+		if (this._clickHandler) { this._container.removeEventListener('click', this._clickHandler); }
 	}
 
 	// ── Internal ──

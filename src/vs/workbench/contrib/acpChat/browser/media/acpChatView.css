@@ -445,6 +445,8 @@
 	word-wrap: break-word;
 	font-size: 13px;
 	line-height: 1.65;
+	user-select: text;
+	-webkit-user-select: text;
 }
 
 .sc-user-msg-content strong {
@@ -583,6 +585,8 @@
 	color: var(--vscode-foreground);
 	word-wrap: break-word;
 	margin-bottom: 4px;
+	user-select: text;
+	-webkit-user-select: text;
 }
 
 .sc-assistant-body strong {
@@ -881,6 +885,8 @@
 	margin: 4px 0;
 	white-space: pre-wrap;
 	word-break: break-word;
+	user-select: text;
+	-webkit-user-select: text;
 }
 
 /* ===== File Labels ===== */
@@ -1677,6 +1683,37 @@
 	position: relative;
 }
 
+/* Copy button — top-right of code block, visible on hover */
+.sc-code-copy-btn {
+	position: absolute;
+	top: 4px;
+	right: 4px;
+	width: 24px;
+	height: 24px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: transparent;
+	border: none;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	padding: 0;
+	border-radius: 4px;
+	opacity: 0;
+	transition: opacity 0.15s, background 0.15s;
+	z-index: 1;
+}
+
+.sc-code-block:hover .sc-code-copy-btn {
+	opacity: 0.7;
+}
+
+.sc-code-copy-btn:hover {
+	opacity: 1 !important;
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
 /* highlight.js code (inline syntax highlighting via marked-highlight) */
 .sc-code-block .sc-code-pre {
 	padding: 10px 12px;
@@ -1999,6 +2036,8 @@
 	line-height: 1.65;
 	color: var(--vscode-descriptionForeground);
 	word-wrap: break-word;
+	user-select: text;
+	-webkit-user-select: text;
 }
 
 .sc-thinking-content p {

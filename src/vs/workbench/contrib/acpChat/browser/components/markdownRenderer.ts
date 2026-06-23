@@ -46,7 +46,8 @@ marked.use({
 			const resolved = resolveLang(rawLang);
 			const langLabel = resolved ? `<div class="sc-code-lang">${resolved}</div>` : '';
 			const codeClass = resolved ? `hljs language-${resolved}` : 'hljs';
-			return `<div class="sc-code-block">${langLabel}<pre class="sc-code-pre"><code class="${codeClass}">${text}</code></pre></div>\n`;
+			const copyBtn = '<button class="sc-code-copy-btn" title="Copy"><span class="codicon codicon-copy"></span></button>';
+			return `<div class="sc-code-block">${langLabel}${copyBtn}<pre class="sc-code-pre"><code class="${codeClass}">${text}</code></pre></div>\n`;
 		},
 	},
 });

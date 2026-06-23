@@ -57,6 +57,6 @@
 ## CROW-CLI SPECIFIC CHANGES
 
 - [ ] Make modifying crow-cli and crow-mcp the core use case of this IDE?
-- [ ] Add `last-content` method to query_memory for inter-agent communication to replace summarization prompt
+- [x] Add `last-content` method to query_memory for inter-agent communication to replace summarization prompt
 
 ## BUGS
