@@ -117,7 +117,7 @@ async fn spawn_echo_session(
 
 /// Spawn a session connected to the scripted orchestration test agent.
 ///
-/// `role` selects the agent's behavior (worker/orchestrator/instructor).
+/// `role` selects the agent's behavior (worker/orchestrator).
 /// `extra_args` are appended after --role (e.g. --worker <sid>).
 async fn spawn_role_session(
     manager: &Arc<AcpSessionManager>,
@@ -278,7 +278,8 @@ async fn run_task_loop_stops_when_cancelled() -> Result<()> {
     let session = spawn_echo_session(&manager, "cancel-test").await?;
     let sid = session.session_id();
 
-    // Set up WaitingForResponse so the loop blocks on delegation_notify
+    // Set up an InProgress task — the loop will nag forever because the
+    // echo agent never marks tasks done via task_write.
     {
         let mut orch = session.orchestration.lock().await;
         orch.task_list.push(sidex_acp::session::Task {
@@ -299,28 +300,25 @@ async fn run_task_loop_stops_when_cancelled() -> Result<()> {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         });
-        orch.set_waiting_for_response();
     }
 
-    // Start the task loop in a background task
+    // Start the task loop in a background task — it will nag forever
     let session_clone = session.clone();
     let loop_handle = tokio::spawn(async move {
         session_clone.run_task_loop().await
     });
 
-    // Give it a moment to enter the blocking notified() call
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Give it a moment to enter the nag loop
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Cancel the prompt
     session.cancel_prompt().await?;
 
-    // The loop should wake up (notify_one was called) and exit quickly
-    // because is_cancelled() returns true
+    // The loop should exit quickly because is_cancelled() returns true
     let result = timeout(Duration::from_secs(3), loop_handle).await;
 
     match result {
         Ok(Ok(Ok(()))) => {
-            // Loop exited cleanly
             let state = session.prompt_state().await;
             assert!(
                 matches!(state, PromptTurnState::Cancelled),
@@ -338,19 +336,17 @@ async fn run_task_loop_stops_when_cancelled() -> Result<()> {
 }
 
 #[tokio::test]
-async fn send_to_session_delivers_callback() -> Result<()> {
+async fn send_to_session_is_fire_and_forget() -> Result<()> {
+    // v3: _send is fire-and-forget. It prompts the target and returns
+    // immediately. No callback, no delegation state. The caller polls
+    // the result via query_memory(toSessionId, limit=1).
     let agent_manager = Arc::new(AgentManager::new());
     let manager = Arc::new(AcpSessionManager::new(agent_manager));
 
-    // Spawn two echo sessions: a "caller" and a "worker"
     let caller = spawn_echo_session(&manager, "caller").await?;
     let worker = spawn_echo_session(&manager, "worker").await?;
     let caller_sid = caller.session_id();
     let worker_sid = worker.session_id();
-
-    // Call _send directly via the tool handler
-    use sidex_acp::tools::ToolContext;
-    use std::collections::HashMap;
 
     let ctx = ToolContext {
         active_terminals: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -371,43 +367,35 @@ async fn send_to_session_delivers_callback() -> Result<()> {
         "blocks": [{"type": "text", "text": "Please do the task"}],
     });
 
-    // Call send_to_session — it should return immediately with "sent"
-    let result = sidex_acp::tools::orchestration_2::send_to_session(&params, &ctx)
+    // _send should return immediately with "sent"
+    let result = sidex_acp::tools::orchestration_3::send_to_session(&params, &ctx)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
     assert_eq!(result.get("status").and_then(|v| v.as_str()), Some("sent"));
 
-    // Caller should be in WaitingForResponse
-    {
-        let orch = caller.orchestration.lock().await;
-        assert_eq!(
-            orch.delegation_state,
-            sidex_acp::session::DelegationState::WaitingForResponse
-        );
-    }
-
-    // The spawned callback should prompt the worker, re-prompt for summary,
-    // capture the summary, then send it back to the caller via session/prompt.
-    // For a plain agent (no task loop), the summary is delivered via
-    // caller.prompt(), which resets delegation state. So we verify delivery
-    // by checking that the caller's prompt_turn_state reaches Complete —
-    // meaning the summary was sent as a session/prompt and the agent responded.
+    // Worker should receive the prompt and complete
     let mut waited = 0;
     loop {
         tokio::time::sleep(Duration::from_millis(200)).await;
         waited += 200;
-        let state = caller.prompt_state().await;
-        if matches!(
-            state,
-            sidex_acp::session::PromptTurnState::Complete { .. }
-        ) {
-            println!("Callback delivered summary via session/prompt after {}ms", waited);
+        let state = worker.prompt_state().await;
+        if matches!(state, PromptTurnState::Complete { .. }) {
+            println!("Worker received prompt after {}ms", waited);
             break;
         }
         if waited > 10000 {
-            panic!("_send callback did not deliver summary within 10s");
+            panic!("worker did not receive prompt within 10s");
         }
     }
+
+    // Caller should NOT receive any callback — no delegation state in v3.
+    // Its prompt state should remain Idle (never prompted).
+    let caller_state = caller.prompt_state().await;
+    assert!(
+        matches!(caller_state, PromptTurnState::Idle),
+        "caller should not have been prompted (fire-and-forget), got {:?}",
+        caller_state
+    );
 
     manager.close_session(&caller_sid).await;
     manager.close_session(&worker_sid).await;
@@ -453,7 +441,7 @@ async fn task_send_starts_target_loop() -> Result<()> {
     });
 
     // task_send should return immediately with success.
-    let result = sidex_acp::tools::orchestration_2::task_send(&params, &ctx)
+    let result = sidex_acp::tools::orchestration_3::task_send(&params, &ctx)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
     assert_eq!(result.get("success").and_then(|v| v.as_bool()), Some(true));
@@ -471,6 +459,12 @@ async fn task_send_starts_target_loop() -> Result<()> {
             orch.task_list[0].status,
             TaskStatus::Pending | TaskStatus::InProgress
         ));
+        // v3: caller_session_id should be set to the instructor's sid
+        assert_eq!(
+            orch.caller_session_id.as_deref(),
+            Some(instructor_sid.as_str()),
+            "caller_session_id should be set to the sender"
+        );
     }
 
     // The spawned loop should auto-start and promote the first task to
@@ -513,18 +507,21 @@ async fn task_send_starts_target_loop() -> Result<()> {
 }
 
 #[tokio::test]
-async fn orchestration_e2e_tripartite_flow() -> Result<()> {
+async fn orchestration_e2e_bipartite_flow() -> Result<()> {
     // Full backend-only end-to-end flow, no frontend / MCP / LLM / crow-cli:
-    //   instructor --_task/send--> orchestrator --_send--> worker
-    // Three scripted stdio agents exercise the real async tool dispatch.
+    //   orchestrator --_task/send--> worker (works task list, nags, summarizes)
+    //                          ↑ "done" callback ↓
+    //               (orchestrator gets prompted: "query_memory for summary")
+    //
+    // Two scripted stdio agents exercise the real async tool dispatch.
     let agent_manager = Arc::new(AgentManager::new());
     let manager = Arc::new(AcpSessionManager::new(agent_manager));
 
-    // 1. Worker (no dependencies).
+    // 1. Worker — works through its own task list.
     let worker = spawn_role_session(&manager, "worker", "worker", vec![]).await?;
     let worker_sid = worker.session_id();
 
-    // 2. Orchestrator — told which worker to delegate to.
+    // 2. Orchestrator — told which worker to send tasks to.
     let orchestrator = spawn_role_session(
         &manager,
         "orchestrator",
@@ -534,70 +531,63 @@ async fn orchestration_e2e_tripartite_flow() -> Result<()> {
     .await?;
     let orchestrator_sid = orchestrator.session_id();
 
-    // 3. Instructor — told which orchestrator to send tasks to.
-    let instructor = spawn_role_session(
-        &manager,
-        "instructor",
-        "instructor",
-        vec!["--target".to_string(), orchestrator_sid.clone()],
-    )
-    .await?;
-    let instructor_sid = instructor.session_id();
-
-    // Kick off the flow: prompt the instructor. Its scripted turn emits a
-    // _task/send to the orchestrator, which (per our fix) auto-starts the
-    // orchestrator's task loop. From here everything is async + autonomous.
+    // Kick off the flow: prompt the orchestrator. Its scripted turn emits a
+    // _task/send to the worker, which auto-starts the worker's task loop.
+    // From here everything is async + autonomous.
     let blocks = vec![json!({"type": "text", "text": "begin orchestration"})];
-    instructor.prompt(blocks).await?;
+    orchestrator.prompt(blocks).await?;
 
-    // Poll the orchestrator's task list until both tasks are completed and the
-    // loop has summarized and exited. The whole async chain (delegate → worker
-    // react loop → summary callback → evaluate → task_write → next task →
-    // … → summary) should complete in well under the timeout.
+    // Poll the worker's task list until both tasks are completed and the
+    // loop has summarized and exited.
     let mut done = false;
     for waited in 0..300 {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let orch = orchestrator.orchestration.lock().await;
+        let orch = worker.orchestration.lock().await;
         let all_completed = !orch.task_list.is_empty()
             && orch
                 .task_list
                 .iter()
                 .all(|t| t.status == TaskStatus::Completed || t.status == TaskStatus::Failed);
         if all_completed && orch.summarized {
-            println!("orchestration completed after {}ms", waited * 100);
+            println!("worker completed all tasks after {}ms", waited * 100);
             done = true;
             break;
         }
     }
-    assert!(done, "orchestration did not complete within 30s");
+    assert!(done, "worker did not complete all tasks within 30s");
 
-    // Final assertions on the orchestrator's state.
+    // Final assertions on the worker's state.
     {
-        let orch = orchestrator.orchestration.lock().await;
+        let orch = worker.orchestration.lock().await;
         assert_eq!(orch.task_list.len(), 2, "two tasks should have been sent");
         assert!(
             orch.task_list.iter().all(|t| t.status == TaskStatus::Completed),
             "both tasks should be Completed"
         );
-        assert!(orch.summarized, "orchestrator should have emitted its summary");
+        assert!(orch.summarized, "worker should have emitted its summary");
     }
-    // The loop must have exited and released the guard.
+    // The worker's loop must have exited and released the guard.
     assert!(
-        !orchestrator
+        !worker
             .task_loop_running
             .load(std::sync::atomic::Ordering::SeqCst),
-        "task loop should have exited (guard released)"
+        "worker task loop should have exited (guard released)"
     );
 
-    // The worker must have actually been prompted (proves the _send path ran).
-    let worker_state = worker.prompt_state().await;
-    assert!(
-        matches!(worker_state, PromptTurnState::Complete { .. }),
-        "worker should have completed a prompt turn, got {:?}",
-        worker_state
-    );
+    // The orchestrator should receive the "done" callback notification
+    // (via session/prompt) telling it to query_memory for the worker's summary.
+    let mut notified = false;
+    for waited in 0..100 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let state = orchestrator.prompt_state().await;
+        if matches!(state, PromptTurnState::Complete { .. }) {
+            println!("orchestrator received done notification after {}ms", waited * 100);
+            notified = true;
+            break;
+        }
+    }
+    assert!(notified, "orchestrator should have received the done callback");
 
-    manager.close_session(&instructor_sid).await;
     manager.close_session(&orchestrator_sid).await;
     manager.close_session(&worker_sid).await;
     Ok(())

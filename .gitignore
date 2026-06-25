@@ -106,3 +106,5 @@ research
 .playwright-mcp
 
 /bin/act
+
+crates/sidex-acp/tests/__pycache__/**

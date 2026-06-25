@@ -344,10 +344,10 @@ pub async fn acp_chat_prompt(
             "Session not found".to_string()
         })?;
 
-    // Reset delegation state for a new user-initiated prompt.
+    // Reset orchestration state for a new user-initiated prompt.
     {
         let mut orch = session.orchestration.lock().await;
-        orch.reset_delegation();
+        orch.summarized = false;
     }
 
     session

@@ -4,21 +4,19 @@
 //! It is intentionally separate from `session.rs` so that alternative
 //! implementations (e.g. `prompt.rs` for v1) can be swapped in via `lib.rs`.
 //!
-//! ## Design (v2)
+//! ## Design (v3 — bipartite)
 //!
 //! - `run_prompt` executes exactly one `session/prompt` turn and returns.
 //! - `prompt()` calls `run_prompt`, then — if the session has active tasks —
 //!   hands off to `run_task_loop()`.
-//! - `run_task_loop()` repeatedly calls `run_prompt` according to the
-//!   delegation state machine in `OrchestrationState`.
-//! - When `WaitingForResponse`, the task loop breaks (returns). This releases
-//!   `prompt_busy` so the `_send` callback's `caller.prompt()` can deliver the
-//!   worker's summary. That new `prompt()` call re-enters `run_task_loop`
-//!   with `Responding` state, which sends a nag (without the summary — the
-//!   summary was already delivered by `_send`).
-//! - `reset_delegation()` is called by the frontend handler (for
-//!   user-initiated prompts), NOT by `prompt()` itself, so `_send`'s
-//!   `caller.prompt()` preserves the `Responding` state.
+//! - `run_task_loop()` repeatedly calls `run_prompt` according to the state
+//!   machine in `OrchestrationState`. When the agent finishes a turn with
+//!   incomplete tasks, it gets nagged. It cannot delegate its way out —
+//!   it must mark tasks done via `task_write`.
+//! - When the loop exits normally (all tasks done or list empty),
+//!   `notify_caller_done()` sends a canned message to the caller that
+//!   registered via `task_send`, telling it to `query_memory` for the
+//!   final summary. The queue serializes this if the caller is busy.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -236,9 +234,6 @@ impl AcpSession {
         let notif = acp::CancelNotification::new(SessionId::from(self.session_id()));
         self.notify("session/cancel", notif).await?;
 
-        // Wake the task loop in case it's blocked waiting for a _send callback
-        self.delegation_notify.notify_one();
-
         Ok(())
     }
 
@@ -263,19 +258,18 @@ impl AcpSession {
 
     /// Run the task-aware task loop.
     ///
-    /// Repeatedly prompts the agent according to the current task and
-    /// delegation state. When the agent delegates via `_send`, the loop
-    /// breaks (returns) — this releases `prompt_busy` so the `_send`
-    /// callback's `caller.prompt()` can deliver the worker's summary.
-    /// That new `prompt()` call re-enters `run_task_loop` with `Responding`
-    /// state, which sends a nag (without the summary — the summary was
-    /// already delivered by `_send`).
+    /// Repeatedly prompts the agent according to the current task state.
+    /// When the agent finishes a turn with incomplete tasks, it gets nagged.
+    /// It cannot delegate its way out — it must mark tasks done via
+    /// `task_write`. When all tasks are complete (or the list is empty),
+    /// the loop exits and `notify_caller_done()` fires if a caller was
+    /// registered via `task_send`.
     /// Stops when there's nothing left to do or the user cancels.
     pub async fn run_task_loop(&self) -> Result<()> {
         // Concurrency guard: at most one task loop per session. If `task_send`
-        // already started the orchestrator's loop (or a user prompt is driving
-        // it), don't start a second — the existing loop picks up new tasks via
-        // `determine_next_prompt`.
+        // already started the target's loop (or a user prompt is driving
+        // it), don't start a second — the existing loop picks up new tasks
+        // via `determine_next_prompt`.
         if self.task_loop_running.swap(true, Ordering::SeqCst) {
             acp_log!(
                 "DEBUG",
@@ -309,12 +303,11 @@ impl AcpSession {
                     }
                 }
                 None => {
-                    // WaitingForResponse: the agent delegated via _send.
-                    // Break out of the loop so prompt() can release
-                    // prompt_busy. When _send's callback delivers the summary
-                    // via caller.prompt(), that new prompt() call will
-                    // re-enter run_task_loop with Responding state.
-                    // NotCalled with nothing to do: just break.
+                    // All tasks done or list empty — loop is finished.
+                    // The completion callback is handled by task_send's
+                    // spawned task (in orchestration_3.rs) after this
+                    // function returns. Keeping it out of run_task_loop
+                    // breaks the recursive Send cycle.
                     break;
                 }
             }

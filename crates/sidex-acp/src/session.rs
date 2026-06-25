@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use chrono::Local;
 use serde::Serialize;
 use serde_json::Value;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex, Notify};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use agent_client_protocol_schema as acp;
 use acp::{
@@ -141,15 +141,6 @@ pub struct SessionTerminal {
 
 // ─── Orchestration types ────────────────────────────────────────────────────
 
-/// Delegation state machine for orchestrator agents.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub enum DelegationState {
-    #[default]
-    NotCalled,
-    WaitingForResponse,
-    Responding,
-}
-
 /// A task in the orchestrator's task list.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Task {
@@ -214,11 +205,9 @@ pub struct AcpSession {
     /// Broadcast channel for terminal events (data, exit) — manager subscribes to forward to frontend.
     terminal_events_tx: broadcast::Sender<TerminalEvent>,
     
-    /// Orchestration: unified state machine (task list, delegation, summary).
+    /// Orchestration: unified state machine (task list, caller, summary).
     /// Single mutex — eliminates lock-ordering risk and sync drift.
     pub orchestration: Arc<Mutex<crate::orchestration_state::OrchestrationState>>,
-    /// Orchestration: wake signal for the task loop when a _send callback arrives.
-    pub(crate) delegation_notify: Arc<Notify>,
     /// Orchestration: guard so at most one `run_task_loop` runs per session.
     /// Prevents double-prompting if `task_send` and a user prompt race, or an
     /// instructor re-sends tasks while the orchestrator loop is already active.
@@ -349,7 +338,6 @@ impl AcpSession {
             session_id_cell,
             terminal_events_tx,
             orchestration: Arc::new(Mutex::new(crate::orchestration_state::OrchestrationState::default())),
-            delegation_notify: Arc::new(Notify::new()),
             task_loop_running: Arc::new(AtomicBool::new(false)),
             queue: Arc::new(Mutex::new(Vec::<QueueItem>::new())),
             prompt_busy: Arc::new(Mutex::new(false)),
