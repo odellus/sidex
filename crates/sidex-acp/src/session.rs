@@ -148,6 +148,7 @@ pub struct Task {
     pub title: String,
     pub description: Option<String>,
     pub status: TaskStatus,
+    pub priority: String,
     pub assigned_to: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -161,6 +162,7 @@ pub enum TaskStatus {
     InProgress,
     Completed,
     Failed,
+    Cancelled,
 }
 
 /// A single item in the session's prompt queue.
@@ -618,11 +620,12 @@ impl AcpSession {
                     TaskStatus::Pending => "pending",
                     TaskStatus::InProgress => "in_progress",
                     TaskStatus::Completed => "completed",
-                    TaskStatus::Failed => "failed", // custom _meta status for frontend
+                    TaskStatus::Failed => "failed",
+                    TaskStatus::Cancelled => "cancelled",
                 };
                 let mut entry = serde_json::json!({
                     "content": t.title,
-                    "priority": "medium",
+                    "priority": t.priority,
                     "status": status,
                 });
                 let mut meta = serde_json::json!({ "taskId": t.id });

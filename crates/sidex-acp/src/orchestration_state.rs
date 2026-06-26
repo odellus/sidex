@@ -29,9 +29,6 @@ pub struct OrchestrationState {
     /// Who sent this task list (set by `task_send`). When the loop exits
     /// normally, a canned "done" notification is sent to this session.
     pub caller_session_id: Option<String>,
-    /// Guard against the infinite "all done, summarize" loop.
-    /// Set true after the summary prompt is emitted; prevents re-emission.
-    pub summarized: bool,
 }
 
 impl Default for OrchestrationState {
@@ -40,7 +37,6 @@ impl Default for OrchestrationState {
             task_list: Vec::new(),
             current_task: None,
             caller_session_id: None,
-            summarized: false,
         }
     }
 }
@@ -104,7 +100,9 @@ impl OrchestrationState {
     fn is_current_task_done(&self) -> bool {
         matches!(
             self.current_task.as_ref(),
-            Some(t) if t.status == TaskStatus::Completed || t.status == TaskStatus::Failed
+            Some(t) if t.status == TaskStatus::Completed
+                || t.status == TaskStatus::Failed
+                || t.status == TaskStatus::Cancelled
         )
     }
 
@@ -114,8 +112,10 @@ impl OrchestrationState {
     }
 
     /// Promote the first `Pending` task in `task_list` to `current_task`.
-    /// Returns the prompt blocks for that task, or a summary prompt if all
-    /// tasks are done, or `None` if there's nothing to do.
+    /// If there are no `Pending` tasks but an `InProgress` task exists (e.g.
+    /// after `task_write` full-replace cleared `current_task`), adopt it as
+    /// the current task. Returns `None` if there's nothing to do (all done
+    /// or list empty).
     fn start_next_task(&mut self) -> Option<Vec<Value>> {
         // Find and promote the first Pending task.
         if let Some(task) = self.task_list.iter_mut().find(|t| t.status == TaskStatus::Pending) {
@@ -126,18 +126,15 @@ impl OrchestrationState {
             return Some(Self::task_prompt(&promoted));
         }
 
-        // No pending tasks. If all are completed/failed and we haven't
-        // summarized yet, emit the summary prompt once.
-        let all_done = !self.task_list.is_empty()
-            && self.task_list.iter().all(|t| {
-                t.status == TaskStatus::Completed || t.status == TaskStatus::Failed
-            });
-
-        if all_done && !self.summarized {
-            self.summarized = true;
-            return Some(Self::summary_prompt());
+        // No pending tasks — check for an orphaned InProgress task
+        // (e.g., after task_write full-replace cleared current_task).
+        if let Some(task) = self.task_list.iter().find(|t| t.status == TaskStatus::InProgress) {
+            let promoted = task.clone();
+            self.current_task = Some(promoted.clone());
+            return Some(Self::task_prompt(&promoted));
         }
 
+        // No pending or in-progress tasks — all done (or list empty). Loop exits.
         None
     }
 
@@ -148,12 +145,10 @@ impl OrchestrationState {
             "type": "text",
             "text": format!(
                 "Current task: {}\n\n{}\n\n\
-                 Work on this task. When it is complete, mark it done with the \
-                 task_write tool (action=\"update\", status=\"completed\", \
-                 taskId=\"{}\").",
+                 Work on this task. When it is complete, call task_write with \
+                 the full todos list, setting this task's status to \"completed\".",
                 task.title,
                 task.description.as_deref().unwrap_or(""),
-                task.id,
             )
         })]
     }
@@ -178,21 +173,15 @@ impl OrchestrationState {
             "type": "text",
             "text": format!(
                 "You have {} incomplete task(s):\n\n{}\n\n\
-                 Mark completed tasks done with task_write (action=\"update\", \
-                 status=\"completed\", taskId=\"<id>\") or continue working on them.",
+                 Call task_write with the full todos list, updating statuses \
+                 for completed tasks to \"completed\".",
                 incomplete.len(),
                 task_lines.join("\n"),
             )
         })]
     }
 
-    fn summary_prompt() -> Vec<Value> {
-        vec![json!({
-            "type": "text",
-            "text": "All tasks are complete. Call no tools and summarize what you accomplished."
-        })]
     }
-}
 
 // ─── Tests ───────────────────────────────────────────────────────────────
 
@@ -206,6 +195,7 @@ mod tests {
             title: title.to_string(),
             description: None,
             status: TaskStatus::Pending,
+            priority: "medium".to_string(),
             assigned_to: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -230,6 +220,12 @@ mod tests {
         t
     }
 
+    fn cancelled(id: &str, title: &str) -> Task {
+        let mut t = pending(id, title);
+        t.status = TaskStatus::Cancelled;
+        t
+    }
+
     fn text_of(blocks: &[Value]) -> &str {
         blocks
             .first()
@@ -247,30 +243,33 @@ mod tests {
     }
 
     #[test]
-    fn all_done_summary_emitted_once_then_stops() {
+    fn all_done_stops() {
         let mut s = OrchestrationState {
             task_list: vec![completed("t1", "first"), completed("t2", "second")],
             ..Default::default()
         };
 
-        // First: summary
-        let blocks = s.determine_next_prompt().expect("should summarize");
-        assert!(text_of(&blocks).contains("All tasks are complete"));
-        assert!(s.summarized);
-
-        // Second: stop (not infinite)
         assert_eq!(s.determine_next_prompt(), None);
     }
 
     #[test]
-    fn failed_tasks_count_as_done_for_summary() {
+    fn failed_tasks_count_as_done() {
         let mut s = OrchestrationState {
             task_list: vec![failed("t1", "first"), completed("t2", "second")],
             ..Default::default()
         };
 
-        let blocks = s.determine_next_prompt().expect("should summarize");
-        assert!(text_of(&blocks).contains("All tasks are complete"));
+        assert_eq!(s.determine_next_prompt(), None);
+    }
+
+    #[test]
+    fn cancelled_tasks_count_as_done() {
+        let mut s = OrchestrationState {
+            task_list: vec![cancelled("t1", "first"), completed("t2", "second")],
+            ..Default::default()
+        };
+
+        assert_eq!(s.determine_next_prompt(), None);
     }
 
     // ── Task promotion ────────────────────────────────────────────────────
@@ -305,16 +304,30 @@ mod tests {
     }
 
     #[test]
-    fn mixed_pending_and_completed_does_not_summarize() {
+    fn orphaned_in_progress_task_is_adopted() {
+        // Simulates task_write full-replace: task is InProgress but
+        // current_task was cleared to None. start_next_task must pick
+        // it up so the nag loop can fire.
+        let mut s = OrchestrationState {
+            task_list: vec![in_progress("t1", "first")],
+            current_task: None,
+            ..Default::default()
+        };
+
+        let blocks = s.determine_next_prompt().expect("should adopt t1");
+        assert!(text_of(&blocks).contains("first"));
+        assert_eq!(s.current_task.as_ref().unwrap().id, "t1");
+    }
+
+    #[test]
+    fn mixed_pending_and_completed_starts_pending() {
         let mut s = OrchestrationState {
             task_list: vec![completed("t1", "first"), pending("t2", "second")],
             ..Default::default()
         };
 
-        // Should start the pending task, not summarize
         let blocks = s.determine_next_prompt().expect("should start pending task");
         assert!(text_of(&blocks).contains("second"));
-        assert!(!s.summarized);
     }
 
     // ── Nag on incomplete ─────────────────────────────────────────────────
@@ -375,35 +388,35 @@ mod tests {
     }
 
     #[test]
-    fn current_task_done_no_more_tasks_sends_summary_once() {
+    fn current_task_done_no_more_tasks_stops() {
         let mut s = OrchestrationState {
             task_list: vec![completed("t1", "first")],
             current_task: Some(completed("t1", "first")),
             ..Default::default()
         };
 
-        // First call: advance (current done) → start_next_task → all done → summary
-        let blocks = s.determine_next_prompt().expect("should send summary");
-        assert!(text_of(&blocks).contains("All tasks are complete"));
-        assert!(s.summarized);
-
-        // Second call: summarized flag is set → should stop
+        // advance (current done) → start_next_task → no pending → None
         assert_eq!(s.determine_next_prompt(), None);
     }
 
     // ── sync_current_task_status ──────────────────────────────────────────
 
     #[test]
-    fn sync_picks_up_task_write_status_change() {
+    fn sync_picks_up_status_change_same_id() {
+        // NOTE: This path can't happen with full-replace task_write (which
+        // generates new UUIDs every call). It documents the sync behavior
+        // for a hypothetical future where IDs are preserved. The real
+        // full-replace path is tested via sync_treats_deleted_current_task_as_done
+        // (ID not found → treated as done) and the integration tests that call
+        // the real task_write handler.
         let mut s = OrchestrationState {
             task_list: vec![completed("t1", "first")], // task_write updated it
-            current_task: Some(in_progress("t1", "first")), // stale
+            current_task: Some(in_progress("t1", "first")), // stale, same ID
             ..Default::default()
         };
 
-        // sync should detect t1 is now completed → advance → summary (all done)
-        let blocks = s.determine_next_prompt().expect("should advance and summarize");
-        assert!(text_of(&blocks).contains("All tasks are complete"));
+        // sync should detect t1 is now completed → advance → no pending → stop
+        assert_eq!(s.determine_next_prompt(), None);
         assert!(s.current_task.is_none());
     }
 
@@ -450,10 +463,11 @@ mod tests {
         let text = text_of(&blocks);
         assert!(text.contains("task_write"));
         assert!(text.contains("completed"));
-        assert!(text.contains("t1"));
-        // Should NOT reference delegation
+        assert!(text.contains("do thing"));
+        // Should NOT reference delegation or CRUD actions
         assert!(!text.contains("delegate"));
         assert!(!text.contains("send_prompt"));
+        assert!(!text.contains("action=\"update\""));
     }
 
     #[test]
@@ -475,7 +489,7 @@ mod tests {
     // ── Full loop simulation ──────────────────────────────────────────────
 
     #[test]
-    fn full_loop_two_tasks_then_summary_then_stop() {
+    fn full_loop_two_tasks_then_stop() {
         let mut s = OrchestrationState {
             task_list: vec![pending("t1", "first"), pending("t2", "second")],
             ..Default::default()
@@ -491,22 +505,21 @@ mod tests {
         assert!(text_of(&b).contains("incomplete task"));
         assert!(text_of(&b).contains("first"));
 
-        // Agent marks t1 done via task_write (updates task_list)
-        s.task_list[0].status = TaskStatus::Completed;
+        // Agent marks t1 done via task_write (full-replace: new IDs, cleared current_task).
+        // This is what the REAL task_write handler does — not an in-place status change.
+        s.task_list = vec![completed("t1-new", "first"), pending("t2", "second")];
+        s.current_task = None;
 
-        // Next loop: sync detects done → advance → start t2
+        // Next loop: no current_task → start_next_task → finds pending t2
         let b = s.determine_next_prompt().expect("start t2");
         assert!(text_of(&b).contains("second"));
         assert_eq!(s.current_task.as_ref().unwrap().id, "t2");
 
-        // Agent marks t2 done
-        s.task_list[1].status = TaskStatus::Completed;
+        // Agent marks t2 done (full-replace again)
+        s.task_list = vec![completed("t2-new", "second")];
+        s.current_task = None;
 
-        // Next loop: advance → all done → summary
-        let b = s.determine_next_prompt().expect("summary");
-        assert!(text_of(&b).contains("All tasks are complete"));
-
-        // Loop stops
+        // Next loop: no current_task → start_next_task → no pending, no in-progress → None
         assert_eq!(s.determine_next_prompt(), None);
     }
 }

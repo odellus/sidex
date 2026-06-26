@@ -13,10 +13,10 @@
 //!   machine in `OrchestrationState`. When the agent finishes a turn with
 //!   incomplete tasks, it gets nagged. It cannot delegate its way out —
 //!   it must mark tasks done via `task_write`.
-//! - When the loop exits normally (all tasks done or list empty),
+//! - When the loop exits (all tasks done or list empty),
 //!   `notify_caller_done()` sends a canned message to the caller that
 //!   registered via `task_send`, telling it to `query_memory` for the
-//!   final summary. The queue serializes this if the caller is busy.
+//!   results. The queue serializes this if the caller is busy.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -253,7 +253,6 @@ impl AcpSession {
                 t.status == crate::session::TaskStatus::Pending
                     || t.status == crate::session::TaskStatus::InProgress
             })
-            || (!orch.task_list.is_empty() && !orch.summarized)
     }
 
     /// Run the task-aware task loop.

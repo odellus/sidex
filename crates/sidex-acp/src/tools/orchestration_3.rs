@@ -2,7 +2,10 @@
 //!
 //! ## Design (v3 — bipartite)
 //!
-//! - `task_read` / `task_write` are pure CRUD on `OrchestrationState.task_list`.
+//! - `task_read` reads `OrchestrationState.task_list`.
+//! - `task_write` wholesale-replaces `task_list` with a new `todos` array
+//!   (full-replace model, like OpenCode's TodoWrite). No CRUD, no action
+//!   field — the agent regenerates the entire list each call.
 //! - `_send` is fire-and-forget: prompts the target session (via the queue,
 //!   which serializes if the target is busy) and returns immediately. No
 //!   delegation state, no summary capture, no callback. The calling agent
@@ -82,25 +85,31 @@ fn format_task_summary(tasks: &[Task]) -> String {
     let in_progress = tasks.iter().filter(|t| t.status == TaskStatus::InProgress).count();
     let completed = tasks.iter().filter(|t| t.status == TaskStatus::Completed).count();
     let failed = tasks.iter().filter(|t| t.status == TaskStatus::Failed).count();
+    let cancelled = tasks.iter().filter(|t| t.status == TaskStatus::Cancelled).count();
 
     format!(
-        "Total: {} | Pending: {} | In Progress: {} | Completed: {} | Failed: {}",
+        "Total: {} | Pending: {} | In Progress: {} | Completed: {} | Failed: {} | Cancelled: {}",
         tasks.len(),
         pending,
         in_progress,
         completed,
         failed,
+        cancelled,
     )
 }
 
 // ─── task_write ───────────────────────────────────────────────────────────
 
-/// Write/update/delete tasks in the session's task list.
+/// Wholesale-replace the session's task list.
+///
+/// Takes a `todos` array (like OpenCode's TodoWrite). Each call replaces the
+/// entire task list — the agent regenerates the full list with updated
+/// statuses each time. No CRUD, no action field.
 pub async fn task_write(params: &Value, ctx: &ToolContext) -> Result<Value, String> {
-    let action = params
-        .get("action")
-        .and_then(|v| v.as_str())
-        .ok_or("missing action")?;
+    let todos = params
+        .get("todos")
+        .and_then(|v| v.as_array())
+        .ok_or("missing todos")?;
 
     let manager = ctx.manager.as_ref().ok_or("manager not available")?;
     let session = manager
@@ -108,88 +117,62 @@ pub async fn task_write(params: &Value, ctx: &ToolContext) -> Result<Value, Stri
         .await
         .ok_or_else(|| format!("session not found: {}", ctx.session_id))?;
 
-    match action {
-        "create" => {
-            let title = params
-                .get("title")
+    // Build the new task list from the todos array
+    let now = chrono::Utc::now();
+    let tasks: Vec<Task> = todos
+        .iter()
+        .enumerate()
+        .map(|(i, todo)| Task {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: todo
+                .get("content")
+                .or_else(|| todo.get("title"))
                 .and_then(|v| v.as_str())
-                .ok_or("missing title")?;
-            let description = params
-                .get("description")
+                .unwrap_or(&format!("Task {}", i + 1))
+                .to_string(),
+            description: None,
+            status: todo
+                .get("status")
                 .and_then(|v| v.as_str())
-                .map(String::from);
-
-            let task = Task {
-                id: uuid::Uuid::new_v4().to_string(),
-                title: title.to_string(),
-                description,
-                status: TaskStatus::Pending,
-                assigned_to: None,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            };
-
-            session.orchestration.lock().await.task_list.push(task.clone());
-            session.broadcast_task_list().await;
-
-            acp_log!("INFO", "Created task: {}", task.title);
-
-            serde_json::to_value(json!({ "task": task })).map_err(|e| e.to_string())
-        }
-        "update" => {
-            let task_id = params
-                .get("taskId")
+                .and_then(parse_status)
+                .unwrap_or(TaskStatus::Pending),
+            priority: todo
+                .get("priority")
                 .and_then(|v| v.as_str())
-                .ok_or("missing taskId")?;
-
-            let mut orch = session.orchestration.lock().await;
-            if let Some(task) = orch.task_list.iter_mut().find(|t| t.id == task_id) {
-                if let Some(status) = params.get("status").and_then(|v| v.as_str()) {
-                    task.status = parse_status(status)?;
-                }
-                if let Some(assigned) = params.get("assignedTo").and_then(|v| v.as_str()) {
-                    task.assigned_to = Some(assigned.to_string());
-                }
-                task.updated_at = chrono::Utc::now();
-
-                let updated = task.clone();
-                drop(orch);
-                session.broadcast_task_list().await;
-
-                acp_log!("INFO", "Updated task {}: {:?}", updated.id, updated.status);
-
-                serde_json::to_value(json!({ "task": updated })).map_err(|e| e.to_string())
-            } else {
-                Err("task not found".into())
-            }
-        }
-        "delete" => {
-            let task_id = params
-                .get("taskId")
+                .unwrap_or("medium")
+                .to_string(),
+            assigned_to: todo
+                .get("assignedTo")
                 .and_then(|v| v.as_str())
-                .ok_or("missing taskId")?;
+                .map(String::from),
+            created_at: now,
+            updated_at: now,
+        })
+        .collect();
 
-            {
-                let mut orch = session.orchestration.lock().await;
-                orch.task_list.retain(|t| t.id != task_id);
-            }
-            session.broadcast_task_list().await;
-
-            acp_log!("INFO", "Deleted task: {}", task_id);
-
-            serde_json::to_value(json!({ "success": true })).map_err(|e| e.to_string())
-        }
-        _ => Err(format!("unknown action: {}", action)),
+    // Full replace: clear both task_list and current_task.
+    // The loop will re-sync via determine_next_prompt on its next iteration.
+    {
+        let mut orch = session.orchestration.lock().await;
+        orch.task_list = tasks.clone();
+        orch.current_task = None;
     }
+
+    session.broadcast_task_list().await;
+
+    acp_log!("INFO", "task_write: replaced task list with {} items", tasks.len());
+
+    serde_json::to_value(json!({ "tasks": tasks })).map_err(|e| e.to_string())
 }
 
-fn parse_status(s: &str) -> Result<TaskStatus, String> {
+fn parse_status(s: &str) -> Option<TaskStatus> {
     match s {
-        "pending" => Ok(TaskStatus::Pending),
-        "in_progress" => Ok(TaskStatus::InProgress),
-        "completed" => Ok(TaskStatus::Completed),
-        "failed" => Ok(TaskStatus::Failed),
-        _ => Err(format!("unknown status: {s}")),
+        "pending" => Some(TaskStatus::Pending),
+        "in_progress" => Some(TaskStatus::InProgress),
+        "completed" => Some(TaskStatus::Completed),
+        "failed" => Some(TaskStatus::Failed),
+        "cancelled" => Some(TaskStatus::Cancelled),
+        _ => None,
     }
 }
 
@@ -232,6 +215,7 @@ pub async fn task_send(params: &Value, ctx: &ToolContext) -> Result<Value, Strin
             title: title.to_string(),
             description: def.get("description").and_then(|v| v.as_str()).map(String::from),
             status: TaskStatus::Pending,
+            priority: "medium".to_string(),
             assigned_to: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -242,7 +226,6 @@ pub async fn task_send(params: &Value, ctx: &ToolContext) -> Result<Value, Strin
     {
         let mut orch = target_session.orchestration.lock().await;
         orch.task_list = tasks.clone();
-        orch.summarized = false;
         orch.current_task = None;
         orch.set_caller(ctx.session_id.clone());
     }

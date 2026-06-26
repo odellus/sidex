@@ -5,11 +5,11 @@ Pure stdlib, line-based JSON-RPC over stdin/stdout — no asyncio, no SDK.
 Role selected via --role.
 
 Bipartite design (v3):
-- worker             : marks InProgress task Completed on prompt/nag, summarizes
+- worker             : marks InProgress task Completed (full-list-replace via todos array)
 - worker_fail        : marks InProgress task Failed
 - worker_multiturn   : requires --nag-count turns before marking done
-- worker_create      : creates a new task on first prompt, then marks done
-- worker_delete      : deletes InProgress task
+- worker_create      : appends a new task on first prompt, then marks current done
+- worker_delete      : removes InProgress task from the list
 - orchestrator       : sends task batch to --worker, acknowledges callback
 - orchestrator_multi : sends to --worker and --worker2
 - orchestrator_resend: on first callback, sends a second batch
@@ -84,32 +84,56 @@ class Agent:
             return msg.get("result")
         return None
 
-    def mark_task(self, tid, status):
-        return self.call_tool("_task/write", {
-            "action": "update", "taskId": tid, "status": status,
-        })
-
-    def delete_task(self, tid):
-        return self.call_tool("_task/write", {
-            "action": "delete", "taskId": tid,
-        })
-
-    def create_task(self, title, description=""):
-        return self.call_tool("_task/write", {
-            "action": "create", "title": title, "description": description,
-        })
-
     def get_tasks(self):
         return (self.call_tool("_task/read", {}) or {}).get("tasks", [])
 
+    def write_todos(self, todos):
+        """Full-list-replace via the new task_write API."""
+        return self.call_tool("_task/write", {"todos": todos})
+
+    def tasks_to_todos(self, tasks, in_progress_status=None):
+        """Convert task_read output to todos array for task_write.
+
+        If in_progress_status is set, the in_progress task gets that status
+        instead (used for marking done/failed).
+        """
+        todos = []
+        for t in tasks:
+            status = t.get("status", "pending")
+            if status == "in_progress" and in_progress_status:
+                status = in_progress_status
+            todo = {"content": t.get("title", ""), "status": status}
+            if "priority" in t:
+                todo["priority"] = t["priority"]
+            if t.get("assigned_to"):
+                todo["assignedTo"] = t["assigned_to"]
+            todos.append(todo)
+        return todos
+
+    def mark_in_progress(self, status):
+        """Mark the in_progress task as the given status (full-list-replace)."""
+        tasks = self.get_tasks()
+        todos = self.tasks_to_todos(tasks, in_progress_status=status)
+        return self.write_todos(todos)
+
+    def delete_in_progress(self):
+        """Remove the in_progress task from the list (full-list-replace)."""
+        tasks = self.get_tasks()
+        todos = self.tasks_to_todos(
+            [t for t in tasks if t.get("status") != "in_progress"])
+        return self.write_todos(todos)
+
+    def append_task(self, title):
+        """Add a new pending task to the list (full-list-replace)."""
+        tasks = self.get_tasks()
+        todos = self.tasks_to_todos(tasks)
+        todos.append({"content": title, "status": "pending"})
+        return self.write_todos(todos)
+
     # ── Worker dispatch ─────────────────────────────────────────────────
 
-    def handle_worker(self, session_id, text, is_nag):
+    def handle_worker(self, session_id, text):
         """Act on the InProgress task per the role."""
-        if "all tasks are complete" in text.lower():
-            agent_message(session_id, "Worker done. All tasks completed.")
-            return
-
         task = find_in_progress(self.get_tasks())
         if not task:
             agent_message(session_id, "No task to act on.")
@@ -118,17 +142,17 @@ class Agent:
         role = self.args.role
 
         if role == "worker":
-            self.mark_task(task["id"], "completed")
+            self.mark_in_progress("completed")
             agent_message(session_id, "Marked task complete.")
 
         elif role == "worker_fail":
-            self.mark_task(task["id"], "failed")
+            self.mark_in_progress("failed")
             agent_message(session_id, "Marked task failed.")
 
         elif role == "worker_multiturn":
             self.nag_counter += 1
             if self.nag_counter >= self.args.nag_count:
-                self.mark_task(task["id"], "completed")
+                self.mark_in_progress("completed")
                 agent_message(session_id,
                               "Marked task done after {} turns.".format(self.nag_counter))
                 self.nag_counter = 0
@@ -139,16 +163,13 @@ class Agent:
 
         elif role == "worker_create":
             if not self.created_flag:
-                self.create_task("Dynamically created task",
-                                 "Created by worker during processing.")
+                self.append_task("Dynamically created task")
                 self.created_flag = True
-                agent_message(session_id, "Created new task and marked current done.")
-            else:
-                agent_message(session_id, "Marked task complete.")
-            self.mark_task(task["id"], "completed")
+            self.mark_in_progress("completed")
+            agent_message(session_id, "Marked task complete.")
 
         elif role == "worker_delete":
-            self.delete_task(task["id"])
+            self.delete_in_progress()
             agent_message(session_id, "Deleted task.")
 
     # ── Orchestrator dispatch ───────────────────────────────────────────
@@ -254,7 +275,7 @@ def main():
 
             if args.role in ("worker", "worker_fail", "worker_multiturn",
                              "worker_create", "worker_delete"):
-                agent.handle_worker(session_id, text, "incomplete task" in text.lower())
+                agent.handle_worker(session_id, text)
             elif args.role in ("orchestrator", "orchestrator_multi", "orchestrator_resend"):
                 agent.handle_orchestrator(session_id, text)
             elif args.role == "sender":

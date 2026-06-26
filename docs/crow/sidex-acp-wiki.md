@@ -12,7 +12,7 @@ response back.
 3. [ACP Protocol Layer](#3-acp-protocol-layer)
 4. [Agent Process Management](#4-agent-process-management)
 5. [Session Lifecycle](#5-session-lifecycle)
-6. [Prompt Implementation (v2)](#6-prompt-implementation-v2)
+6. [Prompt Implementation (v3)](#6-prompt-implementation-v3)
 7. [Orchestration: OrchestrationState](#7-orchestration-orchestrationstate)
 8. [Orchestration Tools: \_send / \_task/*](#8-orchestration-tools-send--task)
 9. [Tool Routing](#9-tool-routing)
@@ -299,8 +299,7 @@ Key fields:
 | `events_tx` | `broadcast::Sender<SessionEvent>` | Session updates → frontends |
 | `prompt_turn_state` | `Arc<Mutex<PromptTurnState>>` | Idle / Running / Complete / Cancelled / Error |
 | `active_terminals` | `Arc<Mutex<HashMap>>` | PTYs created this turn |
-| `orchestration` | `Arc<Mutex<OrchestrationState>>` | Task list + delegation state machine |
-| `delegation_notify` | `Arc<Notify>` | Wake signal for task loop |
+| `orchestration` | `Arc<Mutex<OrchestrationState>>` | Task list + current task + caller (for completion callback) |
 | `task_loop_running` | `Arc<AtomicBool>` | Concurrency guard for task loop |
 | `queue` | `Arc<Mutex<Vec<QueueItem>>>` | Serialized prompt queue |
 | `prompt_busy` | `Arc<Mutex<bool>>` | Serialization guard for `prompt()` |
@@ -335,10 +334,12 @@ errors with "manager not available" — the agent can't reach other sessions.
 
 ---
 
-## 6. Prompt Implementation (v2)
+## 6. Prompt Implementation (v3)
 
-Two implementations exist (`prompt.rs` v1, `prompt_2.rs` v2). The active one
-is selected in `lib.rs` → `prompt_impl.rs`. **v2 is active.**
+`prompt_2.rs` is the active implementation (selected in `lib.rs` →
+`prompt_impl.rs`). Despite the filename, it implements the **v3 bipartite**
+design: no delegation state machine, no summary capture. `prompt.rs` (v1)
+and `tools/orchestration_2.rs` (v2) are dead files, not compiled.
 
 ### `prompt()` — the serialized entry point
 
@@ -365,7 +366,7 @@ Sends exactly one `session/prompt` request, sets `PromptTurnState::Running`,
 awaits the response (no timeout — agent can take minutes), broadcasts
 completion. Does **not** check task state or loop.
 
-### `run_task_loop()` — the orchestration loop
+### `run_task_loop()` — the task loop
 
 ```rust
 pub async fn run_task_loop(&self) -> Result<()> {
@@ -374,44 +375,31 @@ pub async fn run_task_loop(&self) -> Result<()> {
         if is_cancelled() → break
         let decision = orchestration.determine_next_prompt();
         match decision {
-            Some(blocks) → run_prompt(blocks)
-            None → break  // WaitingForResponse or all done
+            Some(blocks) → run_prompt(blocks)   // task, nag, or summary
+            None → break                         // all done or list empty
         }
     }
 }
 ```
 
-**Key design decision:** when `determine_next_prompt()` returns `None` (which
-happens when `WaitingForResponse`), the loop **breaks** instead of blocking
-on `delegation_notify`. This releases `prompt_busy` so the `_send` callback's
-`caller.prompt()` can deliver the worker's summary through the queue. That
-new `prompt()` call re-enters `run_task_loop` with `Responding` state, which
-sends a nag (without the summary — the summary was already delivered by
-`_send`).
+When `determine_next_prompt()` returns `None` (all tasks complete/failed, or
+the list is empty, and the one-shot summary has already fired), the loop
+**breaks**. This releases `prompt_busy`. The completion callback is **not**
+fired from inside `run_task_loop` — it lives in `task_send`'s spawned task
+(`orchestration_3.rs::notify_caller_done`), which runs after this function
+returns. Keeping the callback out of the loop breaks what would otherwise be
+a recursive `Send` cycle (`run_task_loop` → `notify` → `caller.prompt()` →
+`caller.run_task_loop` → `notify` → …).
 
-If the loop blocked on `Notify` instead, `prompt_busy` would still be held,
-and `caller.prompt()` would queue the summary. When the loop woke up, it
-would call `nag_evaluate(summary)` which embedded the summary, then drain the
-queue which sends the summary again — double-send.
-
-### `reset_delegation()`
-
-Called by the **frontend handler** (`acp_chat_prompt` Tauri command), not by
-`prompt()` itself. This means:
-- User-initiated prompts reset delegation to `NotCalled` (new turn)
-- `_send`'s `caller.prompt()` preserves `Responding` state (the summary is
-  a continuation, not a new turn)
-
-If `reset_delegation()` were inside `prompt()`, every `caller.prompt()` call
-would wipe the `Responding` state and the task loop would behave as if the
-agent had never delegated.
+If the agent ends a turn with incomplete tasks, the next
+`determine_next_prompt` returns a nag — the agent cannot delegate its way
+out; it must mark tasks done via `task_write`.
 
 ### `has_active_task_loop()`
 
 Returns true if:
 - There's a current task (`current_task.is_some()`), OR
-- There are pending or in-progress tasks in the list, OR
-- The task list is non-empty and hasn't been summarized yet
+- There are pending or in-progress tasks in the list
 
 This gates whether `run_task_loop()` runs after a prompt.
 
@@ -428,117 +416,100 @@ unit-testable. The single entry point is `determine_next_prompt()`.
 |-------|---------|
 | `task_list` | `Vec<Task>` — the plan/TODO, single source of truth |
 | `current_task` | `Option<Task>` — promoted from task_list, being worked on |
-| `delegation_state` | `DelegationState` — `NotCalled` / `WaitingForResponse` / `Responding` |
-| `delegation_summary` | `Option<String>` — stashed worker summary |
-| `summarized` | `bool` — guard against infinite summary loop |
+| `caller_session_id` | `Option<String>` — who sent this list (set by `task_send`); gets a completion callback when the loop exits normally |
 
-### DelegationState cycle
+### No delegation state (v3)
 
-```
-                    ┌─────────────┐
-          ┌────────►│  NotCalled   │◄─────────────┐
-          │         └──────┬───────┘              │
-          │                │ agent delegates      │
-          │                │ via _send             │ new prompt arrives
-          │                ▼                      │ (reset_delegation)
-          │         ┌──────────────┐               │
-          │         │WaitingForResp│               │
-          │         └──────┬───────┘               │
-          │                │ _send callback        │
-          │                │ sets Responding       │
-          │                ▼                       │
-          │         ┌──────────────┐               │
-          │         │  Responding   │───────────────┘
-          │         └──────┬───────┘
-          │                │ task done
-          │                ▼
-          │         advance_current_task()
-          └─────────── (next task or summary)
-```
+There is no `DelegationState` enum. The agent works its own task list and
+cannot delegate its way out of a task — it must mark tasks done via
+`task_write`. Cross-session delegation is explicit: an orchestrator uses
+`task_send` to populate a target's list (recording itself as `caller`), and
+the target's loop fires a canned completion callback when it finishes.
 
 ### `determine_next_prompt()` decision matrix
 
-| State | Current task done? | Action |
-|-------|--------------------|--------|
-| `WaitingForResponse` | — | Return `None` (loop breaks, waits for callback) |
-| `Responding` | Yes | Advance → start next task (or summary if all done) |
-| `Responding` | No | `nag_evaluate()` — "review and mark done or delegate again" |
-| `NotCalled` | Yes | Advance → start next task (or summary if all done) |
-| `NotCalled` | No (has current task) | `nag_delegate()` — "delegate this task" |
-| `NotCalled` | No current task | `start_next_task()` |
+Each call first syncs `current_task` with any `task_write` status changes
+(including treating a deleted current task as done).
+
+| Condition | Action |
+|-----------|--------|
+| Current task is Completed/Failed | Advance → `start_next_task()` |
+| Current task exists, not done | `nag_incomplete()` — list incomplete tasks, tell agent to mark done |
+| No current task | `start_next_task()` |
+
+`start_next_task()` promotes the first `Pending` task → `InProgress` and
+emits `task_prompt`. If none are pending, it returns `None` (loop exits).
 
 ### Prompt builders
 
-- **task_prompt(task)** — "Current task: {title}. Delegate this to a worker
-  using send_prompt, mark done with task_write."
-- **nag_delegate()** — "You have an active task but did not delegate it."
-- **nag_evaluate()** — "You received a response from the delegated worker.
-  Review it and mark the task done or send it back." **Does not include the
-  summary** — the summary was delivered separately by `_send` via
-  `caller.prompt()`.
-- **summary_prompt()** — "All tasks are complete. Summarize what you did.
-  Call no tools." Emitted once per task list (guarded by `summarized` flag).
+- **task_prompt(task)** — "Current task: {title}. Work on it, mark done with
+  `task_write` (full `todos` list, this task's status → \"completed\")."
+- **nag_incomplete()** — lists all pending/in_progress tasks and tells the
+  agent to mark completed ones done via `task_write` (full-list-replace).
 
-### Infinite-loop guard
+### Loop exit
 
-After all tasks are done, the summary prompt fires once. The `summarized`
-flag prevents re-emission on subsequent `determine_next_prompt()` calls,
-which would loop forever.
+When `determine_next_prompt()` finds no pending/in_progress tasks (all done,
+failed, or cancelled), it returns `None`. The task loop exits, releasing
+`prompt_busy`. No summary prompt is emitted — the caller is notified
+separately via the completion callback in `task_send`.
 
 ---
 
 ## 8. Orchestration Tools: \_send / \_task/*
 
-`tools/orchestration_2.rs` — four tool handlers that implement the
-inter-agent communication protocol. These are **client-side tools**: the
-agent sends a JSON-RPC request, the Rust backend executes it.
+`tools/orchestration_3.rs` — four tool handlers that implement the
+inter-agent communication protocol (v3 bipartite). These are **client-side
+tools**: the agent sends a JSON-RPC request, the Rust backend executes it.
 
-### `_send` — async two-step delegation
+### `_send` — fire-and-forget prompt
 
 ```
 Agent (caller) sends _send(toSessionId=B, blocks=[...])
     │
     ▼
 send_to_session():
-  1. Set caller's delegation state → WaitingForResponse
+  1. target.prompt(blocks) — send message to target via the queue
   2. Return {"status": "sent"} immediately (agent's turn continues)
-  3. [spawned task] target.prompt(blocks) — send message to worker
-  4. [spawned task] target.prompt(summary_blocks) — "summarize, no tools"
-  5. [spawned task] Capture summary from worker's event stream
-  6. [spawned task] caller.orchestration.set_responding(summary)
-  7. [spawned task] caller.prompt(reply_blocks) — deliver summary to caller
-  8. [spawned task] delegation_notify.notify_one() — wake task loop
 ```
 
-Steps 3–8 run in a `tokio::spawn` — the agent gets its tool response
-instantly and can `end_turn`. The async work completes later.
-
-**Why `caller.prompt()` and not a notification?** The summary is a new
-message that the agent needs to process — it goes through the prompt queue
-just like any other prompt. If the caller is busy (task loop running), the
-queue serializes delivery. `delegation_notify.notify_one()` wakes the task
-loop so it re-enters `run_task_loop` with `Responding` state.
+That's it. No summary re-prompt, no callback, no delegation state. The
+caller retrieves the target's response later by calling `query_memory`
+with `session_id="<toSessionId>"`, `limit=1`. The prompt queue serializes
+delivery if the target is busy.
 
 ### `_task/read` — read task list
 
 Returns the session's `task_list` + a summary string (counts by status).
 
-### `_task/write` — CRUD on tasks
+### `_task/write` — Full-list-replace (todos array)
 
-Actions: `create`, `update` (change status/assigned_to), `delete`.
-Broadcasts the updated task list to the frontend as an ACP `plan` session
-update.
+Takes a `todos` array (like OpenCode's TodoWrite). Each call **wholesale-replaces**
+the session's task list — the agent regenerates the full list with updated
+statuses each time. No CRUD, no `action` field, no `taskId`. Clears
+`current_task` (the loop re-syncs via `determine_next_prompt` on its next
+iteration). Broadcasts the updated task list to the frontend as an ACP `plan`
+session update.
 
-### `_task/send` — instructor → orchestrator handoff
+### `_task/send` — delegate a task batch + completion callback
 
-Populates a target session's task list, then **starts the target's task
-loop** (`tokio::spawn(target.run_task_loop())`). The loop promotes the first
-Pending task → InProgress and prompts the orchestrator with it.
+Populates the target session's task list, records the caller
+(`orchestration.set_caller(ctx.session_id)`), and
+spawns `target.run_task_loop()`. The loop promotes the first `Pending` task
+→ `InProgress` and prompts the target with it.
 
-Concurrency-guarded: if the orchestrator is already mid-loop, this is a safe
-no-op. The `task_loop_running: AtomicBool` + RAII `TaskLoopGuard` ensure at
-most one loop runs per session. A re-send while active just adds tasks; the
-existing loop picks them up on its next `determine_next_prompt()`.
+When the loop exits **normally** (all tasks done or list empty),
+`notify_caller_done()` sends a canned message to the caller via
+`caller.prompt()` (through the queue — safe if the caller is busy) telling
+it to `query_memory` for the target's final summary. If the loop was
+**cancelled**, the callback is skipped (cancellation is not normal
+completion). `notify_caller_done` lives in `orchestration_3.rs`, not in
+`run_task_loop`, to break the recursive `Send` cycle.
+
+Concurrency-guarded: if the target is already mid-loop, the spawned
+`run_task_loop` is a no-op (`task_loop_running: AtomicBool` + RAII
+`TaskLoopGuard`); the live loop drains the freshly-populated tasks on its
+next `determine_next_prompt()`.
 
 ---
 
@@ -570,10 +541,10 @@ pub struct ToolContext {
 | `terminal/kill` | `terminal::kill_terminal` | Kill PTY process tree |
 | `terminal/release` | `terminal::release_terminal` | Release PTY (keep output) |
 | `session/requestPermission` | `permissions::request_permission` | Auto-approve (for now) |
-| `_send` | `orchestration_2::send_to_session` | Async delegation |
-| `_task/read` | `orchestration_2::task_read` | Read task list |
-| `_task/write` | `orchestration_2::task_write` | CRUD tasks |
-| `_task/send` | `orchestration_2::task_send` | Send task batch |
+| `_send` | `orchestration_3::send_to_session` | Fire-and-forget prompt |
+| `_task/read` | `orchestration_3::task_read` | Read task list |
+| `_task/write` | `orchestration_3::task_write` | Full-list-replace tasks |
+| `_task/send` | `orchestration_3::task_send` | Delegate task batch + callback |
 
 Every match arm returns `Ok(json)` or `Err(String)`. The `handle_agent_line`
 spawned task wraps the result in a JSON-RPC response and sends it back to
@@ -601,7 +572,7 @@ exist, but execution happens client-side.
 | `acp_chat_new_session` | `manager.bind_new_session(conn, mcp)` | Returns `session_id`, calls `set_manager` |
 | `acp_chat_load_session` | `manager.bind_load_session(conn, sid, cwd)` | Resume existing session |
 | `acp_chat_switch_session` | `manager.switch_session(cur, target, cwd)` | Kill old agent, spawn fresh, load |
-| `acp_chat_prompt` | `session.orchestration.reset_delegation()` then `session.prompt(blocks)` | **reset_delegation is here, not in prompt()** |
+| `acp_chat_prompt` | `session.prompt(blocks)` | User-initiated prompt (enters the queue) |
 | `acp_chat_cancel` | `session.cancel()` | Kill terminals, send session/cancel |
 | `acp_chat_close_session` | `manager.close_session(sid)` | Kill agent, remove from map |
 | `acp_chat_list_sessions` | `session.list_sessions(cwd)` | ACP session/list |
@@ -815,9 +786,10 @@ chunk — O(N) array copy per notification, O(N²) over a streaming response.
 
 ### Unit tests (pure, fast — 0.5s)
 
-- `orchestration_state.rs` — 20 tests for the pure state machine. No I/O,
-  no async. Tests `determine_next_prompt()` in all delegation states, task
-  promotion, summary guard, status sync.
+- `orchestration_state.rs` — 17 tests for the pure state machine. No I/O,
+  no async. Tests `determine_next_prompt()` (task promotion, nag on
+  incomplete, summary guard, status sync, caller tracking), all v3
+  bipartite paths.
 - `session.rs` — 5 tests for PTY/serialization (terminal output, exit codes,
   response shapes).
 
@@ -869,10 +841,13 @@ list UI.
 the **live host app's** ACP session, not `cargo test` subprocesses — don't
 use it to debug test hangs.
 
-### v1 files still on disk
+### Dead v1/v2 files still on disk
 
-`prompt.rs` and `tools/orchestration.rs` are the v1 implementations. They're
-not compiled (commented out in `lib.rs` and `tools/mod.rs`). Safe to delete.
+`prompt.rs` (v1), `tools/orchestration.rs` (v1), and
+`tools/orchestration_2.rs` (v2) are not compiled — `lib.rs` selects
+`prompt_2` and `tools/mod.rs` only declares `orchestration_3`. They still
+reference the removed `DelegationState` / `delegation_notify` fields, so
+they won't compile as-is. Safe to delete.
 
 ### Session config not persisted
 
@@ -880,11 +855,10 @@ Config options (model selection etc.) are received from the agent but not
 persisted across session reloads. The frontend re-requests them on each
 `spawnAndConnect`.
 
-### `_send` notification in acpStore
+### `_send` notification handler in acpStore (vestigial)
 
-The `acpStore._handleSessionEvent` has a handler for `sessionUpdate === '_send'`
-that auto-sends a new prompt with the summary. This is vestigial from the v1
-design — the v2 backend delivers the summary via `caller.prompt()` directly,
-so the frontend should never see an `_send` session update. If it does, the
-double-handling could cause duplicate messages. Left in as a fallback but
-should be audited.
+`acpStore._handleSessionEvent` has a handler for `sessionUpdate === '_send'`
+that auto-sends a new prompt with a summary. This is vestigial from v1/v2.
+In v3 `_send` is fire-and-forget with **no** notification and **no** summary
+capture — the caller polls via `query_memory`. The frontend should never
+see an `_send` session update. Should be removed.

@@ -536,23 +536,6 @@ export class AcpStore {
 			return;
 		}
 
-		// Orchestration: _send notification (response from another agent)
-		if (sessionUpdate === '_send') {
-			const fromSessionId = update.fromSessionId as string;
-			const summary = update.summary as string;
-			const status = update.status as string;
-
-			// Format as a user message showing the response from the other agent
-			const displayText = `📨 **Response from ${fromSessionId}:**\n\n${summary}`;
-
-			// Automatically send a new prompt with the notification so the agent can process it
-			// This will naturally add the message to the chat through the normal sendMessage flow
-			if (status === 'completed') {
-				this.sendMessage('', [{ type: 'text', text: displayText }]);
-			}
-			return;
-		}
-
 		// ── Content events (appended to notification log) ──
 
 		const notificationId = `evt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

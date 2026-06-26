@@ -215,6 +215,7 @@ async fn run_task_loop_processes_tasks_and_summarizes() -> Result<()> {
             title: "First task".to_string(),
             description: Some("Do the first thing".to_string()),
             status: TaskStatus::Pending,
+            priority: "medium".to_string(),
             assigned_to: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -224,6 +225,7 @@ async fn run_task_loop_processes_tasks_and_summarizes() -> Result<()> {
             title: "Second task".to_string(),
             description: None,
             status: TaskStatus::Pending,
+            priority: "medium".to_string(),
             assigned_to: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -245,10 +247,8 @@ async fn run_task_loop_processes_tasks_and_summarizes() -> Result<()> {
     // first prompt was about the first task.
     match result {
         Ok(Ok(())) => {
-            // If it completed, all tasks should be done or summarized
-            let orch = session.orchestration.lock().await;
-            // Either all done, or we got the summary
-            println!("Loop completed. summarized={}", orch.summarized);
+            // If it completed, all tasks should be done
+            println!("Loop completed.");
         }
         Err(_) => {
             // Timeout — expected since echo agent never delegates or marks done.
@@ -287,6 +287,7 @@ async fn run_task_loop_stops_when_cancelled() -> Result<()> {
             title: "Task that will be cancelled".to_string(),
             description: None,
             status: TaskStatus::InProgress,
+            priority: "medium".to_string(),
             assigned_to: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -296,6 +297,7 @@ async fn run_task_loop_stops_when_cancelled() -> Result<()> {
             title: "Task that will be cancelled".to_string(),
             description: None,
             status: TaskStatus::InProgress,
+            priority: "medium".to_string(),
             assigned_to: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -538,7 +540,7 @@ async fn orchestration_e2e_bipartite_flow() -> Result<()> {
     orchestrator.prompt(blocks).await?;
 
     // Poll the worker's task list until both tasks are completed and the
-    // loop has summarized and exited.
+    // loop has exited.
     let mut done = false;
     for waited in 0..300 {
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -548,7 +550,11 @@ async fn orchestration_e2e_bipartite_flow() -> Result<()> {
                 .task_list
                 .iter()
                 .all(|t| t.status == TaskStatus::Completed || t.status == TaskStatus::Failed);
-        if all_completed && orch.summarized {
+        drop(orch);
+        let loop_exited = !worker
+            .task_loop_running
+            .load(std::sync::atomic::Ordering::SeqCst);
+        if all_completed && loop_exited {
             println!("worker completed all tasks after {}ms", waited * 100);
             done = true;
             break;
@@ -560,11 +566,9 @@ async fn orchestration_e2e_bipartite_flow() -> Result<()> {
     {
         let orch = worker.orchestration.lock().await;
         assert_eq!(orch.task_list.len(), 2, "two tasks should have been sent");
-        assert!(
-            orch.task_list.iter().all(|t| t.status == TaskStatus::Completed),
+        assert!(orch.task_list.iter().all(|t| t.status == TaskStatus::Completed),
             "both tasks should be Completed"
         );
-        assert!(orch.summarized, "worker should have emitted its summary");
     }
     // The worker's loop must have exited and released the guard.
     assert!(
@@ -590,6 +594,217 @@ async fn orchestration_e2e_bipartite_flow() -> Result<()> {
 
     manager.close_session(&orchestrator_sid).await;
     manager.close_session(&worker_sid).await;
+    Ok(())
+}
+
+// ─── task_write handler tests ─────────────────────────────────────────────
+// These call the REAL task_write tool handler (not manual state construction)
+// to catch mismatches between the tool's effect on OrchestrationState and the
+// state machine's expectations. The bug where task_write cleared current_task
+// but start_next_task only looked for Pending tasks was missed because the unit
+// tests manually constructed state instead of going through the real handler.
+
+async fn spawn_task_test_session(
+    manager: &Arc<AcpSessionManager>,
+    name: &str,
+) -> Result<Arc<sidex_acp::session::AcpSession>> {
+    let session = spawn_echo_session(manager, name).await?;
+    session.set_manager(manager.clone()).await;
+    Ok(session)
+}
+
+fn task_write_ctx(manager: &Arc<AcpSessionManager>, sid: &str) -> ToolContext {
+    ToolContext {
+        active_terminals: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        session_id: sid.to_string(),
+        shell_env: Arc::new(HashMap::new()),
+        terminal_events_tx: tokio::sync::broadcast::channel(256).0,
+        manager: Some(manager.clone()),
+        agent_config: AgentConfig {
+            name: "test".to_string(),
+            command: "/usr/bin/python3".to_string(),
+            args: vec![echo_agent_path()],
+            env: vec![],
+        },
+    }
+}
+
+#[tokio::test]
+async fn task_write_in_progress_task_triggers_task_prompt() -> Result<()> {
+    // The bug: task_write full-replace clears current_task=None and generates
+    // new UUIDs. start_next_task() only looked for Pending tasks, so an
+    // InProgress task was orphaned and the loop exited with no nag.
+    let agent_manager = Arc::new(AgentManager::new());
+    let manager = Arc::new(AcpSessionManager::new(agent_manager));
+    let session = spawn_task_test_session(&manager, "tw-inprogress").await?;
+    let sid = session.session_id();
+    let ctx = task_write_ctx(&manager, &sid);
+
+    // Agent creates a single in_progress task (normal TodoWrite pattern).
+    let params = json!({
+        "todos": [{"content": "test task", "status": "in_progress"}]
+    });
+    let result = sidex_acp::tools::orchestration_3::task_write(&params, &ctx)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+    assert!(result.get("tasks").is_some());
+
+    // Verify the handler cleared current_task (full-replace behavior).
+    {
+        let orch = session.orchestration.lock().await;
+        assert!(orch.current_task.is_none(), "current_task should be None after task_write");
+        assert_eq!(orch.task_list.len(), 1);
+        assert_eq!(orch.task_list[0].status, TaskStatus::InProgress);
+    }
+
+    // determine_next_prompt must adopt the orphaned InProgress task.
+    let blocks = {
+        let mut orch = session.orchestration.lock().await;
+        orch.determine_next_prompt()
+    };
+    let blocks = blocks.expect("should return task_prompt for orphaned InProgress task");
+    let text = blocks.first()
+        .and_then(|b| b.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    assert!(text.contains("test task"), "prompt should mention the task");
+
+    // current_task should now be set.
+    let orch = session.orchestration.lock().await;
+    assert!(orch.current_task.is_some(), "current_task should be adopted");
+    assert_eq!(orch.current_task.as_ref().unwrap().status, TaskStatus::InProgress);
+
+    manager.close_session(&sid).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_write_in_progress_then_nag_on_next_turn() -> Result<()> {
+    // Full cycle: task_write(in_progress) → task_prompt → don't complete → nag.
+    let agent_manager = Arc::new(AgentManager::new());
+    let manager = Arc::new(AcpSessionManager::new(agent_manager));
+    let session = spawn_task_test_session(&manager, "tw-nag").await?;
+    let sid = session.session_id();
+    let ctx = task_write_ctx(&manager, &sid);
+
+    // Create in_progress task.
+    let params = json!({
+        "todos": [{"content": "unfinished work", "status": "in_progress"}]
+    });
+    sidex_acp::tools::orchestration_3::task_write(&params, &ctx)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    // Turn 1: determine_next_prompt → task_prompt (adopts orphaned InProgress).
+    let blocks = {
+        let mut orch = session.orchestration.lock().await;
+        orch.determine_next_prompt()
+    }.expect("should get task_prompt");
+    assert!(blocks.first()
+        .and_then(|b| b.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .contains("unfinished work"));
+
+    // Turn 2: agent didn't complete → determine_next_prompt → nag.
+    let blocks = {
+        let mut orch = session.orchestration.lock().await;
+        orch.determine_next_prompt()
+    }.expect("should get nag");
+    let text = blocks.first()
+        .and_then(|b| b.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    assert!(text.contains("incomplete task"), "should be a nag, got: {text}");
+
+    manager.close_session(&sid).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_write_marking_complete_stops_loop() -> Result<()> {
+    // task_write(in_progress) → task_prompt → task_write(completed) → stop.
+    let agent_manager = Arc::new(AgentManager::new());
+    let manager = Arc::new(AcpSessionManager::new(agent_manager));
+    let session = spawn_task_test_session(&manager, "tw-stop").await?;
+    let sid = session.session_id();
+    let ctx = task_write_ctx(&manager, &sid);
+
+    // Create in_progress task.
+    let params = json!({
+        "todos": [{"content": "finish me", "status": "in_progress"}]
+    });
+    sidex_acp::tools::orchestration_3::task_write(&params, &ctx)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    // Turn 1: adopt the task.
+    {
+        let mut orch = session.orchestration.lock().await;
+        orch.determine_next_prompt().expect("should get task_prompt");
+    }
+
+    // Agent marks complete via full-replace.
+    let params = json!({
+        "todos": [{"content": "finish me", "status": "completed"}]
+    });
+    sidex_acp::tools::orchestration_3::task_write(&params, &ctx)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    // Turn 2: determine_next_prompt → None (all done).
+    let decision = {
+        let mut orch = session.orchestration.lock().await;
+        orch.determine_next_prompt()
+    };
+    assert_eq!(decision, None, "loop should stop after all tasks completed");
+
+    manager.close_session(&sid).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_write_full_replace_changes_task_ids() -> Result<()> {
+    // Full-replace generates new UUIDs every call. This pins that behavior
+    // so future refactors don't accidentally preserve IDs (which would make
+    // sync_current_task_status work — but it's dead code for full-replace).
+    let agent_manager = Arc::new(AgentManager::new());
+    let manager = Arc::new(AcpSessionManager::new(agent_manager));
+    let session = spawn_task_test_session(&manager, "tw-uuids").await?;
+    let sid = session.session_id();
+    let ctx = task_write_ctx(&manager, &sid);
+
+    // First write.
+    let params = json!({
+        "todos": [{"content": "same content", "status": "pending"}]
+    });
+    let result = sidex_acp::tools::orchestration_3::task_write(&params, &ctx)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let first_id = result
+        .get("tasks")
+        .and_then(|t| t.as_array())
+        .and_then(|a| a.first())
+        .and_then(|t| t.get("id"))
+        .and_then(|i| i.as_str())
+        .unwrap_or("");
+
+    // Second write with identical content.
+    let result = sidex_acp::tools::orchestration_3::task_write(&params, &ctx)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let second_id = result
+        .get("tasks")
+        .and_then(|t| t.as_array())
+        .and_then(|a| a.first())
+        .and_then(|t| t.get("id"))
+        .and_then(|i| i.as_str())
+        .unwrap_or("");
+
+    assert_ne!(first_id, second_id, "full-replace must generate new IDs");
+    assert!(!first_id.is_empty(), "first ID should not be empty");
+
+    manager.close_session(&sid).await;
     Ok(())
 }
 
