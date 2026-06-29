@@ -339,9 +339,9 @@ async fn run_task_loop_stops_when_cancelled() -> Result<()> {
 
 #[tokio::test]
 async fn send_to_session_is_fire_and_forget() -> Result<()> {
-    // v3: _send is fire-and-forget. It prompts the target and returns
-    // immediately. No callback, no delegation state. The caller polls
-    // the result via query_memory(toSessionId, limit=1).
+    // _send spawns the target prompt and returns immediately. When the
+    // target finishes, a canned "done" notification is sent to the caller
+    // via the same queue, telling it to query_memory for results.
     let agent_manager = Arc::new(AgentManager::new());
     let manager = Arc::new(AcpSessionManager::new(agent_manager));
 
@@ -390,14 +390,24 @@ async fn send_to_session_is_fire_and_forget() -> Result<()> {
         }
     }
 
-    // Caller should NOT receive any callback — no delegation state in v3.
-    // Its prompt state should remain Idle (never prompted).
-    let caller_state = caller.prompt_state().await;
-    assert!(
-        matches!(caller_state, PromptTurnState::Idle),
-        "caller should not have been prompted (fire-and-forget), got {:?}",
-        caller_state
-    );
+    // After the worker finishes, the caller should receive a completion
+    // notification telling it to query_memory for results.
+    let mut waited = 0;
+    loop {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        waited += 200;
+        let state = caller.prompt_state().await;
+        if matches!(state, PromptTurnState::Complete { .. }) {
+            println!("Caller received completion notification after {}ms", waited);
+            break;
+        }
+        if waited > 10000 {
+            panic!(
+                "caller did not receive completion notification within 10s, got {:?}",
+                caller.prompt_state().await
+            );
+        }
+    }
 
     manager.close_session(&caller_sid).await;
     manager.close_session(&worker_sid).await;

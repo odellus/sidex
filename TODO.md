@@ -53,10 +53,12 @@
   ```
   state not managed for field `store` on command `remote_connect_ssh`. You must call `.manage()` before using this command
   ```
+- [ ]  editor is slowing down as long contexts in the editor pane acpChat grow, which is precisely what we do NOT want
+
 
 ## CROW-CLI SPECIFIC CHANGES
 
 - [ ] Make modifying crow-cli and crow-mcp the core use case of this IDE?
 - [x] Add `last-content` method to query_memory for inter-agent communication to replace summarization prompt
-
+- [ ] Add tool for listing active sessions
 ## BUGS

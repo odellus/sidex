@@ -6,10 +6,10 @@
 //! - `task_write` wholesale-replaces `task_list` with a new `todos` array
 //!   (full-replace model, like OpenCode's TodoWrite). No CRUD, no action
 //!   field — the agent regenerates the entire list each call.
-//! - `_send` is fire-and-forget: prompts the target session (via the queue,
-//!   which serializes if the target is busy) and returns immediately. No
-//!   delegation state, no summary capture, no callback. The calling agent
-//!   polls the result via `query_memory(session_id, limit=1)`.
+//! - `_send` is fire-and-forget: spawns `target.prompt()` and returns
+//!   immediately. When the target finishes, a canned "done" notification is
+//!   sent to the caller via the same queue, telling it to `query_memory` for
+//!   results. No delegation state, no summary capture.
 //! - `task_send` populates a target session's task list, records the caller
 //!   (so the loop can fire a completion callback), and kicks off the target's
 //!   task loop. When the loop exits normally (all tasks done or list empty),
@@ -26,9 +26,11 @@ use crate::acp_log;
 
 /// Send a prompt to another session (fire-and-forget).
 ///
-/// Prompts the target via `target.prompt()` — the queue serializes if the
-/// target is busy. Returns immediately. The calling agent retrieves the
-/// response later via `query_memory(toSessionId, limit=1)`.
+/// Spawns `target.prompt()` so this call returns immediately. When the
+/// target finishes (success or error), `notify_caller_send_done` sends a
+/// canned message to the caller through the same queue, telling it to
+/// `query_memory` for results. The queue serializes if either the target
+/// or the caller is busy.
 pub async fn send_to_session(params: &Value, ctx: &ToolContext) -> Result<Value, String> {
     let to_session_id = params.get("toSessionId")
         .and_then(|v| v.as_str())
@@ -42,9 +44,14 @@ pub async fn send_to_session(params: &Value, ctx: &ToolContext) -> Result<Value,
     let target_session = manager.get_session(to_session_id).await
         .ok_or_else(|| format!("target session not found: {}", to_session_id))?;
 
-    // Fire and forget. The queue handles serialization if the target is busy.
-    target_session.prompt(blocks).await
-        .map_err(|e| format!("failed to prompt target session: {e}"))?;
+    // Fire and forget: spawn the prompt so this call returns immediately.
+    // When the target finishes, notify the caller via the queue.
+    let target = target_session.clone();
+    let caller_session_id = ctx.session_id.clone();
+    tokio::spawn(async move {
+        let result = target.prompt(blocks).await;
+        notify_caller_send_done(&target, &caller_session_id, &result).await;
+    });
 
     acp_log!("INFO", "send_to_session: sent from {} to {}",
              ctx.session_id, to_session_id);
@@ -54,6 +61,79 @@ pub async fn send_to_session(params: &Value, ctx: &ToolContext) -> Result<Value,
         "toSessionId": to_session_id,
     }))
     .map_err(|e| e.to_string())
+}
+
+// ─── Completion notification for _send ─────────────────────────────────────
+
+/// Notify the caller that a `_send` target has finished processing.
+///
+/// Sends a canned message telling the caller to `query_memory` for results.
+/// Called from `send_to_session`'s spawned task after `prompt()` returns
+/// (both success and error paths). Uses `caller.prompt()` so the queue
+/// serializes if the caller is busy.
+async fn notify_caller_send_done(
+    worker: &AcpSession,
+    caller_session_id: &str,
+    result: &anyhow::Result<()>,
+) {
+    let manager = match worker.get_manager().await {
+        Some(m) => m,
+        None => {
+            acp_log!(
+                "WARN",
+                "notify_caller_send_done: manager unavailable, cannot notify caller {}",
+                caller_session_id
+            );
+            return;
+        }
+    };
+    let caller = match manager.get_session(caller_session_id).await {
+        Some(c) => c,
+        None => {
+            acp_log!(
+                "WARN",
+                "notify_caller_send_done: caller session {} not found",
+                caller_session_id
+            );
+            return;
+        }
+    };
+
+    let worker_sid = worker.session_id();
+    let text = match result {
+        Ok(()) => format!(
+            "Session {} has finished. \
+             Call query_memory with session_id=\"{}\", limit=1 \
+             to see what it did.",
+            worker_sid, worker_sid,
+        ),
+        Err(e) => format!(
+            "Session {} finished with an error: {}. \
+             Call query_memory with session_id=\"{}\" to check for partial results.",
+            worker_sid, e, worker_sid,
+        ),
+    };
+
+    let blocks = vec![json!({
+        "type": "text",
+        "text": text,
+    })];
+
+    if let Err(e) = caller.prompt(blocks).await {
+        acp_log!(
+            "ERROR",
+            "notify_caller_send_done: failed to notify caller {}: {}",
+            caller_session_id,
+            e
+        );
+    } else {
+        acp_log!(
+            "INFO",
+            "Notified caller {} that session {} is done",
+            caller_session_id,
+            worker_sid
+        );
+    }
 }
 
 // ─── task_read ────────────────────────────────────────────────────────────
