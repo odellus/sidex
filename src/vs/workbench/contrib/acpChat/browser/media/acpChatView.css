@@ -1961,6 +1961,11 @@
 	flex-shrink: 0;
 }
 
+/* ===== Virtualization Spacer ===== */
+.sc-message-spacer {
+	flex-shrink: 0;
+}
+
 
 
 /* ===== Thinking Block ===== */

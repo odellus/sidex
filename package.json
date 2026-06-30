@@ -25,6 +25,7 @@
     "@microsoft/1ds-core-js": "^4.3.11",
     "@microsoft/1ds-post-js": "^4.3.11",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-shell": "^2",
     "@tiptap/core": "^3.26.0",
     "@tiptap/extension-image": "^3.26.0",

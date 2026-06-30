@@ -86,6 +86,14 @@ export interface SessionConfigOption {
 export class AcpStore {
 	private _connectionId: string = '';
 	private _sessionId: string = '';
+
+	// Debounce timer for streaming notification fires. During streaming, the
+	// agent sends tokens rapidly (20-50/sec). Firing the emitter per-token
+	// causes the entire render pipeline (renderNotification → RAF → forced
+	// layout → ResizeObserver → forced layout) to run per-token. Batching at
+	// 50ms reduces render cycles to ~20/sec without visible lag.
+	private _notificationDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+	private _notificationPending = false;
 	private _cwd: string = '';
 
 	private _connectionStatus: ConnectionStatus = 'disconnected';
@@ -159,6 +167,10 @@ export class AcpStore {
 		for (const u of this._unlisteners) { u(); }
 		this._unlisteners = [];
 		this._clearConnectingSafetyTimer();
+		if (this._notificationDebounceTimer) {
+			clearTimeout(this._notificationDebounceTimer);
+			this._notificationDebounceTimer = undefined;
+		}
 	}
 
 	private _clearConnectingSafetyTimer(): void {
@@ -545,13 +557,42 @@ export class AcpStore {
 			data: { update },
 		};
 		this._notifications.push(notification);
-		this._onDidChangeNotifications.fire();
+		this._scheduleNotificationFire();
+	}
+
+	private _scheduleNotificationFire(): void {
+		if (this._notificationDebounceTimer) { return; }
+		this._notificationPending = true;
+		this._notificationDebounceTimer = setTimeout(() => {
+			this._notificationDebounceTimer = undefined;
+			if (this._notificationPending) {
+				this._notificationPending = false;
+				this._onDidChangeNotifications.fire();
+			}
+		}, 50);
+	}
+
+	/** Flush any pending debounced notification fire immediately. */
+	private _flushNotificationFire(): void {
+		if (this._notificationDebounceTimer) {
+			clearTimeout(this._notificationDebounceTimer);
+			this._notificationDebounceTimer = undefined;
+		}
+		if (this._notificationPending) {
+			this._notificationPending = false;
+			this._onDidChangeNotifications.fire();
+		}
 	}
 
 	private _setStreaming(streaming: boolean): void {
 		if (this._isStreaming !== streaming) {
 			this._isStreaming = streaming;
 			this._onDidChangeStreaming.fire(streaming);
+			// When streaming stops, flush pending notifications so the final
+			// state renders immediately instead of waiting for the debounce.
+			if (!streaming) {
+				this._flushNotificationFire();
+			}
 		}
 	}
 

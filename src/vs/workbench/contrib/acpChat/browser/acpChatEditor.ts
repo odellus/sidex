@@ -24,18 +24,13 @@ import { IEditorGroup } from '../../../services/editor/common/editorGroupsServic
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { AcpStore } from './acpStore.js';
-import { ScrollManager } from './scrollManager.js';
+import { MessageList } from './messageList.js';
 import { AcpChatSessionManager } from './acpChatSessionManager.js';
 import { ChatHeader } from './components/toolbar/chatHeader.js';
 import { ChatInput } from './components/input/chatInput.js';
 import type { PlanEntry } from './components/input/chatInput.js';
-import { UserMessage } from './components/messages/userMessage.js';
-import { ThinkingBlock } from './components/messages/thinkingBlock.js';
-import { AgentMessageGroup } from './components/messages/agentMessage.js';
-import { ToolCallGroup } from './components/tools/toolCallGroup.js';
 import { acpChatEditorId } from './acpChatEditorInput.js';
 import { AcpChatEditorInput } from './acpChatEditorInput.js';
-import type { AcpNotification } from './acp-utils.js';
 import { invoke } from '../../../../sidex-bridge.js';
 import './media/acpChatView.css';
 
@@ -48,21 +43,10 @@ interface AgentConfig {
 
 const $ = dom.$;
 
-interface GroupComponent {
-	type: string;
-	component: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup;
-}
-
 /** Per-session view state — DOM elements and rendering state that are swapped on tab switch. */
 interface SessionView {
-	messagesEl: HTMLElement;
-	welcomeEl: HTMLElement;
-	sentinelEl: HTMLElement;
-	scrollManager: ScrollManager;
+	messageList: MessageList;
 	chatInput: ChatInput;
-	groupComponents: GroupComponent[];
-	lastGroupType: string | null;
-	lastGroupComp: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup | null;
 	/** How many notifications were rendered when this view was saved.
 	 *  On restore, notifications past this index are replayed to catch up. */
 	renderedCount: number;
@@ -92,16 +76,8 @@ export class AcpChatEditor extends EditorPane {
 	// Live DOM elements (currently visible)
 	private _rootEl!: HTMLElement;
 	private _header!: ChatHeader;
-	private _messagesEl!: HTMLElement;
-	private _welcomeEl!: HTMLElement;
-	private _sentinelEl!: HTMLElement;
-	private _scrollManager!: ScrollManager;
+	private _messageList!: MessageList;
 	private _chatInput!: ChatInput;
-
-	// Live rendering state (for the currently visible session)
-	private _groupComponents: GroupComponent[] = [];
-	private _lastGroupType: string | null = null;
-	private _lastGroupComp: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup | null = null;
 
 	constructor(
 		group: IEditorGroup,
@@ -139,7 +115,7 @@ export class AcpChatEditor extends EditorPane {
 		}
 
 		// Save the current session's view state before switching
-		if (this._currentSessionId && this._messagesEl) {
+		if (this._currentSessionId && this._messageList) {
 			this._saveCurrentView();
 		}
 
@@ -161,7 +137,7 @@ export class AcpChatEditor extends EditorPane {
 		// The store kept receiving Tauri events, but the view's listener was
 		// disposed — so notifications accumulated unrendered. Replay them now.
 		// Must come after _bindEvents() since that clears _sessionDisposables
-		// (catch-up adds components to _groupComponents, not _sessionDisposables).
+		// (catch-up adds groups to MessageList internally, not _sessionDisposables).
 		const renderedSoFar = savedView ? savedView.renderedCount : 0;
 		this._catchUpNotifications(renderedSoFar);
 
@@ -169,8 +145,8 @@ export class AcpChatEditor extends EditorPane {
 		this._chatInput.setStreaming(this._acpStore.isStreaming);
 		this._chatInput.setQueuedItems(this._acpStore.queuedItems);
 		this._chatInput.setPlanEntries(this._acpStore.planEntries as PlanEntry[]);
-		if (!this._acpStore.isStreaming && this._lastGroupComp) {
-			this._lastGroupComp.stopStreaming();
+		if (!this._acpStore.isStreaming) {
+			this._messageList.stopStreaming();
 		}
 
 		// Scroll to bottom when returning to a previously viewed tab.
@@ -178,7 +154,7 @@ export class AcpChatEditor extends EditorPane {
 		// _catchUpNotifications() may render new content — the browser needs a
 		// layout pass before scrollHeight is correct.
 		if (savedView) {
-			requestAnimationFrame(() => this._scrollManager.forceScrollToBottom());
+			requestAnimationFrame(() => this._messageList.scrollManager.forceScrollToBottom());
 		}
 
 		// Connect to agent if not already connected
@@ -193,7 +169,7 @@ export class AcpChatEditor extends EditorPane {
 	override clearInput(): void {
 		// Save and detach DOM before clearing references — VS Code may call
 		// clearInput() before setInput() when switching editor tabs.
-		if (this._currentSessionId && this._messagesEl) {
+		if (this._currentSessionId && this._messageList) {
 			this._saveCurrentView();
 		}
 		super.clearInput();
@@ -208,55 +184,36 @@ export class AcpChatEditor extends EditorPane {
 			return;
 		}
 
-		// Detach elements from the live container (they stay alive in memory)
-		this._messagesEl.remove();
+		this._messageList.detach();
 		this._chatInput.element.remove();
 
 		this._sessionViews.set(this._currentSessionId, {
-			messagesEl: this._messagesEl,
-			welcomeEl: this._welcomeEl,
-			sentinelEl: this._sentinelEl,
-			scrollManager: this._scrollManager,
+			messageList: this._messageList,
 			chatInput: this._chatInput,
-			groupComponents: this._groupComponents,
-			lastGroupType: this._lastGroupType,
-			lastGroupComp: this._lastGroupComp,
-			renderedCount: this._acpStore?.notifications.length ?? 0,
+			renderedCount: this._messageList.renderedCount,
 		});
 	}
 
 	/** Restore a previously saved session view into the live container. */
 	private _restoreView(view: SessionView): void {
-		this._messagesEl = view.messagesEl;
-		this._welcomeEl = view.welcomeEl;
-		this._sentinelEl = view.sentinelEl;
-		this._scrollManager = view.scrollManager;
+		this._messageList = view.messageList;
 		this._chatInput = view.chatInput;
-		this._groupComponents = view.groupComponents;
-		this._lastGroupType = view.lastGroupType;
-		this._lastGroupComp = view.lastGroupComp;
 
-		// Re-attach to the live container
-		this._rootEl.appendChild(this._messagesEl);
+		this._messageList.attachTo(this._rootEl);
 		this._chatInput.appendTo(this._rootEl);
 	}
 
 	/** Build a fresh session view (messages + input) and attach to the live container. */
 	private _createSessionView(): void {
-		this._messagesEl = dom.append(this._rootEl, $('div.sc-messages'));
-		this._welcomeEl = dom.append(this._messagesEl, $('div.sc-welcome'));
-		dom.append(this._welcomeEl, $('div.sc-welcome-title')).textContent = 'crow-cli';
-		dom.append(this._welcomeEl, $('div.sc-welcome-subtitle')).textContent = 'Ask anything';
-		this._sentinelEl = dom.append(this._messagesEl, $('div.sc-scroll-sentinel'));
-		this._scrollManager = new ScrollManager(this._messagesEl, this._sentinelEl);
-
 		const workspaceRoot = this._workspaceContext.getWorkspace().folders[0]?.uri?.fsPath || '';
+		this._messageList = new MessageList({
+			instantiationService: this._instantiationService,
+			cwd: workspaceRoot,
+			getNotifications: () => this._acpStore?.notifications ?? [],
+		});
+		this._messageList.attachTo(this._rootEl);
 		this._chatInput = new ChatInput(workspaceRoot);
 		this._chatInput.appendTo(this._rootEl);
-
-		this._groupComponents = [];
-		this._lastGroupType = null;
-		this._lastGroupComp = null;
 	}
 
 	private _bindEvents(): void {
@@ -270,7 +227,7 @@ export class AcpChatEditor extends EditorPane {
 		this._sessionDisposables.add(
 			this._chatInput.onSendBlocks(blocks => {
 				store.sendMessage('', blocks);
-				this._scrollManager.forceScrollToBottom();
+				this._messageList.scrollManager.forceScrollToBottom();
 			})
 		);
 		this._sessionDisposables.add(this._chatInput.onStop(() => store.stopStreaming()));
@@ -290,7 +247,7 @@ export class AcpChatEditor extends EditorPane {
 				store.stopStreaming();
 				setTimeout(() => {
 					store.sendMessage('', item.blocks);
-					this._scrollManager.forceScrollToBottom();
+					this._messageList.scrollManager.forceScrollToBottom();
 				}, 100);
 			}
 		}));
@@ -321,15 +278,11 @@ export class AcpChatEditor extends EditorPane {
 		);
 
 		this._sessionDisposables.add(store.onDidChangeNotifications(() => this._onNotificationAdded()));
-		this._sessionDisposables.add(dom.addDisposableListener(
-			this._messagesEl, 'sc:heavy-render-done' as any,
-			() => this._scrollManager.scrollToBottom()
-		));
 		this._sessionDisposables.add(
 			store.onDidChangeStreaming(s => {
 				this._chatInput.setStreaming(s);
-				if (!s && this._lastGroupComp) {
-					this._lastGroupComp.stopStreaming();
+				if (!s) {
+					this._messageList.stopStreaming();
 				}
 			})
 		);
@@ -513,117 +466,20 @@ export class AcpChatEditor extends EditorPane {
 
 	/** Replay notifications that arrived while this tab was hidden. */
 	private _catchUpNotifications(fromIndex: number): void {
-		const store = this._acpStore;
-		if (!store || !this._messagesEl) { return; }
-
-		const notifications = store.notifications;
-		this._welcomeEl.style.display = notifications.length > 0 ? 'none' : 'flex';
-
-		if (notifications.length === 0) {
-			this._resetView();
-			return;
-		}
-
-		// Store was cleared while we were away — start fresh
-		if (notifications.length < fromIndex) {
-			this._resetView();
-			fromIndex = 0;
-		}
-
-		for (let i = fromIndex; i < notifications.length; i++) {
-			this._renderNotification(notifications[i]);
-		}
+		this._messageList?.catchUp(fromIndex);
 	}
 
 	private _onNotificationAdded(): void {
 		const store = this._acpStore;
-		if (!store || !this._messagesEl) { return; }
+		if (!store || !this._messageList) { return; }
 
 		const notifications = store.notifications;
-		this._welcomeEl.style.display = notifications.length > 0 ? 'none' : 'flex';
-
 		if (notifications.length === 0) {
-			this._resetView();
+			this._messageList.reset();
 			return;
 		}
 
-		this._renderNotification(notifications[notifications.length - 1]);
-
-		// Scroll after the browser has laid out the new content
-		requestAnimationFrame(() => this._scrollManager.scrollToBottom());
-
-		// Mermaid scroll is handled by the 'sc:heavy-render-done' event listener
-		// in _bindEvents() — fires when async mermaid.run() actually completes
-	}
-
-	/** Render a single notification into the current view (grouping logic). */
-	private _renderNotification(notification: AcpNotification): void {
-		const update = notification.data.update;
-		const sessionUpdate = update.sessionUpdate as string;
-
-		const groupType = sessionUpdate === 'tool_call' || sessionUpdate === 'tool_call_update' ? 'tool' : sessionUpdate;
-
-		if (groupType === this._lastGroupType && this._lastGroupComp) {
-			this._lastGroupComp.appendNotification(notification);
-		} else {
-			if (this._lastGroupComp) {
-				this._lastGroupComp.stopStreaming();
-			}
-
-			const comp = this._createGroupComponent(notification);
-			const wrapper = document.createElement('div');
-			wrapper.classList.add('sc-message-group');
-			this._messagesEl.insertBefore(wrapper, this._sentinelEl);
-			comp.appendTo(wrapper);
-			this._groupComponents.push({ type: groupType, component: comp });
-			this._lastGroupComp = comp;
-			this._lastGroupType = groupType;
-		}
-	}
-
-	private _createGroupComponent(
-		notification: AcpNotification
-	): UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup {
-		const sessionUpdate = notification.data.update.sessionUpdate as string;
-		let comp: UserMessage | ThinkingBlock | AgentMessageGroup | ToolCallGroup;
-
-		switch (sessionUpdate) {
-			case 'user_message_chunk':
-				comp = new UserMessage();
-				break;
-			case 'agent_thought_chunk':
-				comp = new ThinkingBlock();
-				break;
-			case 'agent_message_chunk':
-				comp = new AgentMessageGroup();
-				break;
-		case 'tool_call':
-		case 'tool_call_update':
-			comp = new ToolCallGroup(this._instantiationService, this._workspaceContext.getWorkspace().folders[0]?.uri?.fsPath || '');
-			break;
-			default:
-				comp = new AgentMessageGroup();
-				break;
-		}
-
-		comp.appendNotification(notification);
-		return comp;
-	}
-
-	private _resetView(): void {
-		for (const gc of this._groupComponents) {
-			gc.component.dispose();
-		}
-		this._groupComponents = [];
-		this._lastGroupType = null;
-		this._lastGroupComp = null;
-
-		if (this._messagesEl) {
-			dom.clearNode(this._messagesEl);
-			this._messagesEl.appendChild(this._welcomeEl);
-			this._messagesEl.appendChild(this._sentinelEl);
-			this._scrollManager?.reset();
-		}
+		this._messageList.catchUp(this._messageList.renderedCount);
 	}
 
 	private _fetchSessions(): void {

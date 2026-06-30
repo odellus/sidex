@@ -178,7 +178,13 @@ export class BrowserClipboardService extends Disposable implements IClipboardSer
 		}
 
 		if (this.isTauriProtocol) {
-			this.fallbackWriteText(text);
+			try {
+				const { writeText: tauriWriteText } = await import('@tauri-apps/plugin-clipboard-manager');
+				return await tauriWriteText(text);
+			} catch (error) {
+				console.error('Tauri clipboard writeText failed:', error);
+				this.fallbackWriteText(text);
+			}
 			return;
 		}
 
@@ -229,6 +235,14 @@ export class BrowserClipboardService extends Disposable implements IClipboardSer
 		}
 
 		if (this.isTauriProtocol) {
+			try {
+				const { readText: tauriReadText } = await import('@tauri-apps/plugin-clipboard-manager');
+				const text = await tauriReadText();
+				this.logService.trace('BrowserClipboardService#readText (tauri) text.length:', text.length);
+				return text;
+			} catch (error) {
+				console.error('Tauri clipboard readText failed:', error);
+			}
 			return '';
 		}
 		// Guard access to navigator.clipboard with try/catch

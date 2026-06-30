@@ -138,11 +138,6 @@ export class ChatInput extends Component {
 			e.stopPropagation();
 		});
 
-		// Attach button — folder icon
-		const attachBtn = DOM.append(right, $('button.sc-input-icon-btn'));
-		attachBtn.title = 'Attach';
-		attachBtn.appendChild(codicon(Codicon.folder));
-
 		// Send button — custom SVG (circle + up arrow)
 		this._sendBtn = DOM.append(right, $('button.sc-send-btn'));
 		this._sendBtn.title = 'Send';
